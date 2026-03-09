@@ -1,0 +1,19 @@
+# Environment variables (API keys)
+.env
+
+# Python virtual environment
+venv/
+
+# Data files (will live on server in production)
+data/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Mac system files
+.DS_Store
+
+# IDE settings
+.vscode/
+.idea/

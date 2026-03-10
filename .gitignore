@@ -5,7 +5,7 @@
 venv/
 
 # Data files (will live on server in production)
-data/
+/data/
 
 # Python cache
 __pycache__/

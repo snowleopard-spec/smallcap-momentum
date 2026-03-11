@@ -4,18 +4,15 @@ Signal Runner
 Orchestrates all signals, applies configurable weights,
 and produces a final ranked watchlist.
 
-Each signal produces a 0-100 percentile score.
-The runner combines them into a single composite score
-using the specified weights, then ranks the universe.
-
 Signals:
-    1. price_momentum    - Composite 3/6/12 month price returns
-    2. volume_surge      - Volume spike relative to history
+    1. price_momentum     - Composite 3/6/12 month price returns
+    2. volume_surge       - Volume spike relative to history
     3. price_acceleration - Momentum of momentum (2nd derivative)
-    4. rsi               - Relative Strength Index (momentum-adjusted)
-    5. stochastic        - Slow Stochastic Oscillator
-    6. financial_health  - SEC fundamentals solvency score
-    7. news_attention    - Media coverage level and surge
+    4. rsi                - Relative Strength Index (momentum-adjusted)
+    5. stochastic         - Slow Stochastic Oscillator
+    6. financial_health   - SEC fundamentals solvency score
+    7. news_attention     - Media coverage level and surge
+    8. insider_activity   - Insider buying/selling from Form 4 filings
 """
 
 import os
@@ -31,16 +28,18 @@ from src.signals.rsi import RSISignal
 from src.signals.stochastic import StochasticSignal
 from src.signals.financial_health import FinancialHealth
 from src.signals.news_attention import NewsAttention
+from src.signals.insider_activity import InsiderActivity
 
 # Default weights (must sum to 1.0)
 DEFAULT_WEIGHTS = {
     "price_momentum": 0.20,
-    "volume_surge": 0.15,
-    "price_acceleration": 0.15,
-    "rsi": 0.10,
-    "stochastic": 0.10,
-    "financial_health": 0.20,
+    "volume_surge": 0.12,
+    "price_acceleration": 0.12,
+    "rsi": 0.08,
+    "stochastic": 0.08,
+    "financial_health": 0.15,
     "news_attention": 0.10,
+    "insider_activity": 0.15,
 }
 
 # Price-based signal classes (standard constructor)
@@ -53,13 +52,10 @@ PRICE_SIGNAL_CLASSES = {
 }
 
 
-def run_all_signals(prices_df, universe_df, fundamentals_df=None, news_df=None):
+def run_all_signals(prices_df, universe_df, fundamentals_df=None,
+                    news_df=None, insider_df=None):
     """
     Run all signals and return individual score DataFrames.
-
-    Returns:
-        dict of signal_name -> DataFrame with columns:
-        ticker, signal_name, raw_signal, score
     """
     results = {}
 
@@ -91,19 +87,22 @@ def run_all_signals(prices_df, universe_df, fundamentals_df=None, news_df=None):
     else:
         print(f"    Skipped (no news data)")
 
+    # Run insider activity signal
+    print(f"  Running insider_activity...")
+    if insider_df is not None and not insider_df.empty:
+        signal = InsiderActivity(prices_df, universe_df, insider_df)
+        scores = signal.score()
+        results["insider_activity"] = scores
+        print(f"    Scored {len(scores)} tickers")
+    else:
+        print(f"    Skipped (no insider data)")
+
     return results
 
 
 def combine_scores(signal_results, weights=None):
     """
     Combine individual signal scores into a composite score.
-
-    Args:
-        signal_results: dict of signal_name -> score DataFrame
-        weights: dict of signal_name -> weight (must sum to 1.0)
-
-    Returns:
-        DataFrame with ticker, individual scores, and composite score
     """
     if weights is None:
         weights = DEFAULT_WEIGHTS
@@ -132,7 +131,6 @@ def combine_scores(signal_results, weights=None):
     if merged is None or merged.empty:
         return pd.DataFrame()
 
-    # Calculate composite score (weighted average of available signals)
     signal_columns = [name for name in weights.keys() if name in merged.columns]
 
     def weighted_score(row):
@@ -162,20 +160,14 @@ def main():
                         help="Number of top stocks to display (default: 20)")
     parser.add_argument("--min-score", type=float, default=None,
                         help="Only show stocks above this composite score")
-    parser.add_argument("--weight-momentum", type=float, default=DEFAULT_WEIGHTS["price_momentum"],
-                        help=f"Weight for price momentum (default: {DEFAULT_WEIGHTS['price_momentum']})")
-    parser.add_argument("--weight-volume", type=float, default=DEFAULT_WEIGHTS["volume_surge"],
-                        help=f"Weight for volume surge (default: {DEFAULT_WEIGHTS['volume_surge']})")
-    parser.add_argument("--weight-acceleration", type=float, default=DEFAULT_WEIGHTS["price_acceleration"],
-                        help=f"Weight for price acceleration (default: {DEFAULT_WEIGHTS['price_acceleration']})")
-    parser.add_argument("--weight-rsi", type=float, default=DEFAULT_WEIGHTS["rsi"],
-                        help=f"Weight for RSI (default: {DEFAULT_WEIGHTS['rsi']})")
-    parser.add_argument("--weight-stochastic", type=float, default=DEFAULT_WEIGHTS["stochastic"],
-                        help=f"Weight for stochastic (default: {DEFAULT_WEIGHTS['stochastic']})")
-    parser.add_argument("--weight-health", type=float, default=DEFAULT_WEIGHTS["financial_health"],
-                        help=f"Weight for financial health (default: {DEFAULT_WEIGHTS['financial_health']})")
-    parser.add_argument("--weight-news", type=float, default=DEFAULT_WEIGHTS["news_attention"],
-                        help=f"Weight for news attention (default: {DEFAULT_WEIGHTS['news_attention']})")
+    parser.add_argument("--weight-momentum", type=float, default=DEFAULT_WEIGHTS["price_momentum"])
+    parser.add_argument("--weight-volume", type=float, default=DEFAULT_WEIGHTS["volume_surge"])
+    parser.add_argument("--weight-acceleration", type=float, default=DEFAULT_WEIGHTS["price_acceleration"])
+    parser.add_argument("--weight-rsi", type=float, default=DEFAULT_WEIGHTS["rsi"])
+    parser.add_argument("--weight-stochastic", type=float, default=DEFAULT_WEIGHTS["stochastic"])
+    parser.add_argument("--weight-health", type=float, default=DEFAULT_WEIGHTS["financial_health"])
+    parser.add_argument("--weight-news", type=float, default=DEFAULT_WEIGHTS["news_attention"])
+    parser.add_argument("--weight-insider", type=float, default=DEFAULT_WEIGHTS["insider_activity"])
     parser.add_argument("--save", action="store_true",
                         help="Save results to data/watchlist.parquet")
     args = parser.parse_args()
@@ -188,6 +180,7 @@ def main():
         "stochastic": args.weight_stochastic,
         "financial_health": args.weight_health,
         "news_attention": args.weight_news,
+        "insider_activity": args.weight_insider,
     }
 
     print(f"=== Signal Runner ===")
@@ -202,26 +195,26 @@ def main():
     print(f"  Universe: {len(universe)} tickers")
     print(f"  Date range: {prices['date'].min().date()} to {prices['date'].max().date()}")
 
-    # Load fundamentals if available
     fundamentals = None
     if os.path.exists("data/fundamentals.parquet"):
         fundamentals = pd.read_parquet("data/fundamentals.parquet")
         print(f"  Fundamentals: {len(fundamentals)} tickers")
-    else:
-        print(f"  Fundamentals: not found (financial_health will be skipped)")
 
-    # Load news if available
     news = None
     if os.path.exists("data/news_attention.parquet"):
         news = pd.read_parquet("data/news_attention.parquet")
         print(f"  News: {len(news)} tickers")
-    else:
-        print(f"  News: not found (news_attention will be skipped)")
+
+    insider = None
+    if os.path.exists("data/insider_activity.parquet"):
+        insider = pd.read_parquet("data/insider_activity.parquet")
+        print(f"  Insider: {len(insider)} tickers")
+
     print()
 
     # Run signals
     print("--- Running signals ---\n")
-    signal_results = run_all_signals(prices, universe, fundamentals, news)
+    signal_results = run_all_signals(prices, universe, fundamentals, news, insider)
 
     # Combine scores
     print(f"\n--- Combining scores ---\n")
@@ -245,7 +238,8 @@ def main():
               watchlist[watchlist["composite_score"] >= args.min_score]
 
     signal_cols = ["price_momentum", "volume_surge", "price_acceleration",
-                   "rsi", "stochastic", "financial_health", "news_attention"]
+                   "rsi", "stochastic", "financial_health", "news_attention",
+                   "insider_activity"]
     short_names = {
         "price_momentum": "Momntm",
         "volume_surge": "Volume",
@@ -254,21 +248,22 @@ def main():
         "stochastic": "Stoch",
         "financial_health": "Health",
         "news_attention": "News",
+        "insider_activity": "Insdr",
     }
 
-    header = f"{'Rank':<6}{'Ticker':<8}{'Comp':>7}"
+    header = f"{'Rank':<6}{'Ticker':<8}{'Comp':>6}"
     for col in signal_cols:
-        header += f"{short_names[col]:>8}"
+        header += f"{short_names[col]:>7}"
     header += f"  {'Name'}"
     print(header)
-    print("-" * 120)
+    print("-" * 125)
 
     for _, row in display.iterrows():
-        line = f"{row['rank']:<6}{row['ticker']:<8}{row['composite_score']:>7.1f}"
+        line = f"{row['rank']:<6}{row['ticker']:<8}{row['composite_score']:>6.1f}"
         for col in signal_cols:
             val = row.get(col, np.nan)
-            line += f"{val:>8.1f}" if pd.notna(val) else f"{'N/A':>8}"
-        line += f"  {row.get('name', '')[:32]}"
+            line += f"{val:>7.1f}" if pd.notna(val) else f"{'N/A':>7}"
+        line += f"  {row.get('name', '')[:30]}"
         print(line)
 
     # Summary stats

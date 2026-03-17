@@ -165,9 +165,12 @@ def build_watchlist_response(watchlist_path=None):
 
     price_info = {}
     if os.path.exists(DATA_FILES["prices"]):
-        pdf = pd.read_parquet(DATA_FILES["prices"])
+        watchlist_tickers = df["ticker"].unique().tolist()
+        pdf = pd.read_parquet(DATA_FILES["prices"], filters=[("ticker", "in", watchlist_tickers)])
         pdf["date"] = pd.to_datetime(pdf["date"])
-        for ticker in df["ticker"].unique():
+        cutoff = pdf["date"].max() - pd.Timedelta(days=30)
+        pdf = pdf[pdf["date"] >= cutoff]
+        for ticker in watchlist_tickers:
             tdf = pdf[pdf["ticker"] == ticker].sort_values("date")
             if len(tdf) >= 6:
                 latest = float(tdf.iloc[-1]["close"])

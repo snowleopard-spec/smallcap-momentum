@@ -16,6 +16,7 @@ Signals:
 """
 
 import os
+import json
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -190,7 +191,28 @@ def main():
     # Load data
     print("--- Loading data ---\n")
     prices = pd.read_parquet("data/prices_combined.parquet")
+
+    # Load universe and apply a defensive market cap filter using config.json.
+    # This is the safety net: even if universe.parquet has stale entries,
+    # they are stripped here before any signal runs.
     universe = pd.read_parquet("data/universe.parquet")
+    try:
+        with open("config.json") as f:
+            cfg = json.load(f)
+        min_cap = cfg["universe"]["min_market_cap"]
+        max_cap = cfg["universe"]["max_market_cap"]
+        before = len(universe)
+        universe = universe[
+            (universe["market_cap"] >= min_cap) &
+            (universe["market_cap"] <= max_cap)
+        ].reset_index(drop=True)
+        after = len(universe)
+        if before != after:
+            print(f"  [Cap filter] Removed {before - after} tickers outside "
+                  f"${min_cap/1e6:.0f}M–${max_cap/1e6:.0f}M bounds")
+    except (FileNotFoundError, KeyError) as e:
+        print(f"  Warning: could not apply cap filter from config.json ({e})")
+
     print(f"  Prices: {len(prices)} rows")
     print(f"  Universe: {len(universe)} tickers")
     print(f"  Date range: {prices['date'].min().date()} to {prices['date'].max().date()}")

@@ -104,6 +104,9 @@ def run_all_signals(prices_df, universe_df, fundamentals_df=None,
 def combine_scores(signal_results, weights=None):
     """
     Combine individual signal scores into a composite score.
+    Missing signals are treated as neutral (50) rather than ignored,
+    so stocks with incomplete data are naturally penalised vs stocks
+    with strong signals across all 8 dimensions.
     """
     if weights is None:
         weights = DEFAULT_WEIGHTS
@@ -135,15 +138,13 @@ def combine_scores(signal_results, weights=None):
     signal_columns = [name for name in weights.keys() if name in merged.columns]
 
     def weighted_score(row):
-        total_weight = 0
         total_score = 0
         for col in signal_columns:
-            if pd.notna(row[col]):
-                total_score += row[col] * weights[col]
-                total_weight += weights[col]
-        if total_weight == 0:
-            return np.nan
-        return total_score / total_weight
+            # Treat missing signals as neutral 50 — stocks with incomplete
+            # data are naturally penalised vs those with strong signals across all 8
+            val = row[col] if pd.notna(row[col]) else 50.0
+            total_score += val * weights[col]
+        return total_score
 
     merged["composite_score"] = merged.apply(weighted_score, axis=1)
     merged = merged.dropna(subset=["composite_score"])

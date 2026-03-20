@@ -9,16 +9,22 @@ Usage:
 """
 
 import os
+import sys
 import time
 import subprocess
 from datetime import datetime
 
+# Always use the same Python interpreter that launched this script.
+# This means venv Python when run via cron or directly, and local
+# Python when run on your Mac — no hardcoded paths needed.
+PYTHON = sys.executable
+
 DATA_SOURCES = {
-    "universe": { "file": "data/universe.parquet", "max_age_days": 7 },
-    "prices": { "file": "data/prices_combined.parquet", "max_age_days": 1 },
-    "fundamentals": { "file": "data/fundamentals.parquet", "max_age_days": 30 },
-    "news": { "file": "data/news_attention.parquet", "max_age_days": 1 },
-    "insider": { "file": "data/insider_activity.parquet", "max_age_days": 14 },
+    "universe":     { "file": "data/universe.parquet",       "max_age_days": 7  },
+    "prices":       { "file": "data/prices_combined.parquet","max_age_days": 1  },
+    "fundamentals": { "file": "data/fundamentals.parquet",   "max_age_days": 30 },
+    "news":         { "file": "data/news_attention.parquet", "max_age_days": 1  },
+    "insider":      { "file": "data/insider_activity.parquet","max_age_days": 14 },
 }
 
 def get_file_age_days(filepath):
@@ -72,6 +78,7 @@ def main():
 
     print(f"=== Refresh Pipeline ===")
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"Python: {PYTHON}")
     print(f"Mode: {'FORCE' if args.force else 'SMART'}\n")
     print("--- Current data status ---\n")
     any_stale = print_status()
@@ -91,28 +98,28 @@ def main():
     if not args.signals_only:
         print("\n\n--- Step 1/5: Universe ---")
         if not args.force and not is_stale("universe"): print("  Up to date, skipping")
-        else: run_command("Refreshing universe", "python src/data/universe.py --refresh")
+        else: run_command("Refreshing universe", f"{PYTHON} src/data/universe.py --refresh")
 
         print("\n--- Step 2/5: Prices ---")
         if not args.force and not is_stale("prices"): print("  Up to date, skipping")
-        elif os.path.exists("data/prices_combined.parquet"): run_command("Refreshing prices", "python src/data/fetch_prices.py --refresh")
-        else: run_command("Fetching full price history", "python src/data/fetch_prices.py")
+        elif os.path.exists("data/prices_combined.parquet"): run_command("Refreshing prices", f"{PYTHON} src/data/fetch_prices.py --refresh")
+        else: run_command("Fetching full price history", f"{PYTHON} src/data/fetch_prices.py")
 
         print("\n--- Step 3/5: News ---")
-        run_command("Refreshing news", "python src/data/fetch_news.py")
+        run_command("Refreshing news", f"{PYTHON} src/data/fetch_news.py")
 
         print("\n--- Step 4/5: Fundamentals ---")
         if args.skip_fundamentals: print("  Skipped")
         elif not args.force and not is_stale("fundamentals"): print("  Up to date, skipping")
-        else: run_command("Refreshing fundamentals", "python src/data/fetch_fundamentals.py --refresh")
+        else: run_command("Refreshing fundamentals", f"{PYTHON} src/data/fetch_fundamentals.py --refresh")
 
         print("\n--- Step 5/5: Insider Activity ---")
         if args.skip_insider: print("  Skipped")
         elif not args.force and not is_stale("insider"): print("  Up to date, skipping")
-        else: run_command("Refreshing insider data", "python src/data/fetch_insider.py --refresh")
+        else: run_command("Refreshing insider data", f"{PYTHON} src/data/fetch_insider.py --refresh")
 
     print("\n--- Running Signals ---")
-    run_command("Running all signals", "python -m src.signals.runner --save")
+    run_command("Running all signals", f"{PYTHON} -m src.signals.runner --save")
 
     total_time = time.time() - start_time
     print(f"\n{'='*60}\n  Refresh complete in {total_time/60:.1f} minutes\n{'='*60}")

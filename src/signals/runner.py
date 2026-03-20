@@ -246,12 +246,21 @@ def main():
         print("No results. Check your data.")
         return
 
-    # Add company names and market caps
+    # Merge names and market caps using inner join to ensure only universe
+    # tickers appear in the final watchlist. This is the final guard against
+    # any out-of-bounds tickers that individual signals may have scored.
     watchlist = watchlist.merge(
         universe[["ticker", "name", "market_cap"]],
         on="ticker",
-        how="left"
+        how="inner"
     )
+
+    # Ensure name is always a clean string (never NaN)
+    watchlist["name"] = watchlist["name"].fillna("").astype(str)
+
+    # Re-rank after inner join filter
+    watchlist["rank"] = watchlist["composite_score"].rank(ascending=False).astype(int)
+    watchlist = watchlist.sort_values("rank").reset_index(drop=True)
 
     # Display results
     print(f"Total scored: {len(watchlist)} stocks\n")
@@ -285,7 +294,7 @@ def main():
         for col in signal_cols:
             val = row.get(col, np.nan)
             line += f"{val:>7.1f}" if pd.notna(val) else f"{'N/A':>7}"
-        line += f"  {row.get('name', '')[:30]}"
+        line += f"  {str(row.get('name', ''))[:30]}"
         print(line)
 
     # Summary stats

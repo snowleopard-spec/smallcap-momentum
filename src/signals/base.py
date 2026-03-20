@@ -27,8 +27,13 @@ class BaseSignal(ABC):
             universe_df: Universe data with columns:
                          ticker, name, market_cap, sic_code, primary_exchange
         """
-        self.prices = prices_df.copy()
         self.universe = universe_df.copy()
+
+        # Filter prices to only universe tickers upfront.
+        # This ensures every signal only processes tickers within the
+        # defined market cap bounds — not the full prices file.
+        universe_tickers = set(universe_df["ticker"].tolist())
+        self.prices = prices_df[prices_df["ticker"].isin(universe_tickers)].copy()
 
         # Ensure date is datetime
         self.prices["date"] = pd.to_datetime(self.prices["date"])

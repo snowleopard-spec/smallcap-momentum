@@ -1,10 +1,11 @@
 """
-Unicorn Hunt API v1.2 — with granular progress tracking
+Unicorn Hunt API v1.3
 
 Run with: uvicorn api:app --reload --port 8000
 """
 
 import os
+import sys
 import time
 import math
 import json
@@ -17,11 +18,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict
 
-app = FastAPI(title="Unicorn Hunt API", version="1.2")
+# Always use the same Python that launched this process —
+# ensures subprocess calls work in cron without venv activation issues.
+PYTHON = sys.executable
+
+app = FastAPI(title="Unicorn Hunt API", version="1.3")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "https://unicornpunk.org", "https://smallcap-momentum.pages.dev"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://unicornpunk.org",
+        "https://www.unicornpunk.org",
+        "https://smallcap-momentum.pages.dev",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,11 +66,38 @@ SIC_SECTORS = {
 }
 
 PROGRESS_FILE = "data/.refresh_progress.json"
+CONFIG_FILE = "config.json"
 refresh_in_progress = False
+
+# Fallback config if config.json is missing
+_FALLBACK_CONFIG = {
+    "universe": {
+        "min_market_cap": 500000000,
+        "max_market_cap": 2000000000,
+    },
+    "signal_weights": {
+        "price_momentum": 0.20,
+        "volume_surge": 0.20,
+        "price_acceleration": 0.10,
+        "rsi": 0.00,
+        "stochastic": 0.10,
+        "financial_health": 0.15,
+        "news_attention": 0.05,
+        "insider_activity": 0.20,
+    }
+}
+
+
+def load_config():
+    """Load config.json, return fallback if missing."""
+    try:
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return _FALLBACK_CONFIG
 
 
 def write_progress(step, total_steps, step_name, detail="", percent=0):
-    """Write progress to a shared JSON file that subprocesses can also update."""
     try:
         os.makedirs("data", exist_ok=True)
         with open(PROGRESS_FILE, "w") as f:
@@ -76,7 +114,6 @@ def write_progress(step, total_steps, step_name, detail="", percent=0):
 
 
 def read_progress():
-    """Read the current progress from the shared file."""
     try:
         if os.path.exists(PROGRESS_FILE):
             with open(PROGRESS_FILE, "r") as f:
@@ -87,7 +124,6 @@ def read_progress():
 
 
 def clear_progress():
-    """Remove the progress file."""
     try:
         if os.path.exists(PROGRESS_FILE):
             os.remove(PROGRESS_FILE)
@@ -214,7 +250,35 @@ def build_watchlist_response(watchlist_path=None):
     return {"data": results}
 
 
-# ── Endpoints ──
+# ── Endpoints ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/config")
+def get_config():
+    """
+    Serve config.json to the frontend.
+    Returns universe bounds and default signal weights as percentages (0-100).
+    """
+    cfg = load_config()
+    universe = cfg.get("universe", _FALLBACK_CONFIG["universe"])
+    raw_weights = cfg.get("signal_weights", _FALLBACK_CONFIG["signal_weights"])
+
+    # Strip notes key, convert decimals to percentages for frontend sliders
+    weights_pct = {
+        k: round(v * 100)
+        for k, v in raw_weights.items()
+        if k != "notes"
+    }
+
+    return {
+        "universe": {
+            "min_market_cap": universe["min_market_cap"],
+            "max_market_cap": universe["max_market_cap"],
+            "min_market_cap_bn": round(universe["min_market_cap"] / 1e9, 2),
+            "max_market_cap_bn": round(universe["max_market_cap"] / 1e9, 2),
+        },
+        "signal_weights": weights_pct,
+    }
+
 
 @app.get("/api/status")
 def get_status():
@@ -293,15 +357,20 @@ def recalc_watchlist(req: RecalcRequest):
         return {"error": "No watchlist found.", "data": []}
 
     df = pd.read_parquet(watchlist_path)
-    signal_columns = [k for k in weights.keys() if k in df.columns]
+
+    # Only score signals with non-zero weight
+    signal_columns = [k for k in weights.keys() if k in df.columns and weights.get(k, 0) > 0]
 
     def weighted_score(row):
-        total_w, total_s = 0, 0
+        total_s = 0
+        total_w = 0
         for col in signal_columns:
             val = row.get(col)
-            if val is not None and not (isinstance(val, float) and math.isnan(val)):
-                total_s += val * weights.get(col, 0)
-                total_w += weights.get(col, 0)
+            # Treat missing/NaN as neutral 50 — consistent with runner.py
+            if val is None or (isinstance(val, float) and math.isnan(val)):
+                val = 50.0
+            total_s += val * weights.get(col, 0)
+            total_w += weights.get(col, 0)
         return total_s / total_w if total_w > 0 else np.nan
 
     df["composite_score"] = df.apply(weighted_score, axis=1)
@@ -346,7 +415,6 @@ def run_step(step_num, step_name, command, force=False, skip=False):
 
     write_progress(step_num, 6, step_name, "starting...", base_pct)
 
-    # Run the subprocess and monitor output for progress
     process = subprocess.Popen(
         command, shell=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -355,14 +423,11 @@ def run_step(step_num, step_name, command, force=False, skip=False):
 
     for line in process.stdout:
         line = line.strip()
-        # Parse progress lines like "Progress: 400/755 (53%)"
         if "Progress:" in line or "progress:" in line.lower():
             try:
-                # Extract percentage from output
                 if "%" in line:
                     pct_str = line.split("(")[1].split("%")[0] if "(" in line else "0"
                     sub_pct = int(pct_str)
-                    # Map sub-progress to overall progress for this step
                     overall_pct = base_pct + int(sub_pct / 100 * (step_pct - base_pct))
                     detail = line.split("|")[0].strip() if "|" in line else line
                     write_progress(step_num, 6, step_name, detail, overall_pct)
@@ -384,28 +449,28 @@ def run_refresh_with_progress(force=False):
     try:
         # Step 1: Universe
         skip = not force and not is_stale("universe")
-        run_step(1, "Universe", "python src/data/universe.py --refresh", force=force, skip=skip)
+        run_step(1, "Universe", f"{PYTHON} src/data/universe.py --refresh", force=force, skip=skip)
 
         # Step 2: Prices
         if force or is_stale("prices"):
-            cmd = "python src/data/fetch_prices.py --refresh" if os.path.exists(DATA_FILES["prices"]) else "python src/data/fetch_prices.py"
+            cmd = f"{PYTHON} src/data/fetch_prices.py --refresh" if os.path.exists(DATA_FILES["prices"]) else f"{PYTHON} src/data/fetch_prices.py"
             run_step(2, "Prices", cmd, force=force)
         else:
             run_step(2, "Prices", "", skip=True)
 
         # Step 3: News (always refresh)
-        run_step(3, "News", "python src/data/fetch_news.py")
+        run_step(3, "News", f"{PYTHON} src/data/fetch_news.py")
 
         # Step 4: Fundamentals
         skip = not force and not is_stale("fundamentals")
-        run_step(4, "Fundamentals", "python src/data/fetch_fundamentals.py --refresh", force=force, skip=skip)
+        run_step(4, "Fundamentals", f"{PYTHON} src/data/fetch_fundamentals.py --refresh", force=force, skip=skip)
 
         # Step 5: Insider
         skip = not force and not is_stale("insider")
-        run_step(5, "Insider Activity", "python src/data/fetch_insider.py --refresh", force=force, skip=skip)
+        run_step(5, "Insider Activity", f"{PYTHON} src/data/fetch_insider.py --refresh", force=force, skip=skip)
 
         # Step 6: Signals
-        run_step(6, "Running Signals", "python -m src.signals.runner --save")
+        run_step(6, "Running Signals", f"{PYTHON} -m src.signals.runner --save")
 
         write_progress(6, 6, "Complete", "All done!", 100)
         time.sleep(1)

@@ -31,16 +31,16 @@ from src.signals.financial_health import FinancialHealth
 from src.signals.news_attention import NewsAttention
 from src.signals.insider_activity import InsiderActivity
 
-# Default weights (must sum to 1.0)
-DEFAULT_WEIGHTS = {
+# Hardcoded fallback weights (used only if config.json is missing)
+_FALLBACK_WEIGHTS = {
     "price_momentum": 0.20,
-    "volume_surge": 0.12,
-    "price_acceleration": 0.12,
-    "rsi": 0.08,
-    "stochastic": 0.08,
+    "volume_surge": 0.20,
+    "price_acceleration": 0.10,
+    "rsi": 0.00,
+    "stochastic": 0.10,
     "financial_health": 0.15,
-    "news_attention": 0.10,
-    "insider_activity": 0.15,
+    "news_attention": 0.05,
+    "insider_activity": 0.20,
 }
 
 # Price-based signal classes (standard constructor)
@@ -51,6 +51,19 @@ PRICE_SIGNAL_CLASSES = {
     "rsi": RSISignal,
     "stochastic": StochasticSignal,
 }
+
+
+def load_default_weights():
+    """Load default signal weights from config.json, fall back to hardcoded if missing."""
+    try:
+        with open("config.json") as f:
+            cfg = json.load(f)
+        weights = {k: v for k, v in cfg["signal_weights"].items() if k != "notes"}
+        print(f"  Loaded weights from config.json")
+        return weights
+    except (FileNotFoundError, KeyError):
+        print(f"  Warning: could not load weights from config.json, using fallback defaults")
+        return _FALLBACK_WEIGHTS.copy()
 
 
 def run_all_signals(prices_df, universe_df, fundamentals_df=None,
@@ -107,15 +120,17 @@ def combine_scores(signal_results, weights=None):
     Missing signals are treated as neutral (50) rather than ignored,
     so stocks with incomplete data are naturally penalised vs stocks
     with strong signals across all 8 dimensions.
+    Signals with weight 0.00 are excluded entirely.
     """
     if weights is None:
-        weights = DEFAULT_WEIGHTS
+        weights = load_default_weights()
 
-    # Validate weights sum to 1
+    # Validate weights sum to 1 (ignoring zero-weight signals)
     weight_sum = sum(weights.values())
     if abs(weight_sum - 1.0) > 0.01:
         print(f"  Warning: weights sum to {weight_sum}, normalising to 1.0")
-        weights = {k: v / weight_sum for k, v in weights.items()}
+        total = sum(v for v in weights.values())
+        weights = {k: v / total for k, v in weights.items()}
 
     # Pivot each signal's scores into columns
     merged = None
@@ -135,16 +150,24 @@ def combine_scores(signal_results, weights=None):
     if merged is None or merged.empty:
         return pd.DataFrame()
 
-    signal_columns = [name for name in weights.keys() if name in merged.columns]
+    # Only include signals that have non-zero weight
+    signal_columns = [
+        name for name in weights.keys()
+        if name in merged.columns and weights.get(name, 0) > 0
+    ]
 
     def weighted_score(row):
         total_score = 0
+        total_weight = 0
         for col in signal_columns:
             # Treat missing signals as neutral 50 — stocks with incomplete
-            # data are naturally penalised vs those with strong signals across all 8
+            # data are naturally penalised vs those with strong signals across all
             val = row[col] if pd.notna(row[col]) else 50.0
             total_score += val * weights[col]
-        return total_score
+            total_weight += weights[col]
+        if total_weight == 0:
+            return np.nan
+        return total_score / total_weight
 
     merged["composite_score"] = merged.apply(weighted_score, axis=1)
     merged = merged.dropna(subset=["composite_score"])
@@ -157,37 +180,40 @@ def combine_scores(signal_results, weights=None):
 def main():
     import argparse
 
+    # Load weights from config as defaults for CLI args
+    default_weights = load_default_weights()
+
     parser = argparse.ArgumentParser(description="Run momentum signals")
     parser.add_argument("--top", type=int, default=20,
                         help="Number of top stocks to display (default: 20)")
     parser.add_argument("--min-score", type=float, default=None,
                         help="Only show stocks above this composite score")
-    parser.add_argument("--weight-momentum", type=float, default=DEFAULT_WEIGHTS["price_momentum"])
-    parser.add_argument("--weight-volume", type=float, default=DEFAULT_WEIGHTS["volume_surge"])
-    parser.add_argument("--weight-acceleration", type=float, default=DEFAULT_WEIGHTS["price_acceleration"])
-    parser.add_argument("--weight-rsi", type=float, default=DEFAULT_WEIGHTS["rsi"])
-    parser.add_argument("--weight-stochastic", type=float, default=DEFAULT_WEIGHTS["stochastic"])
-    parser.add_argument("--weight-health", type=float, default=DEFAULT_WEIGHTS["financial_health"])
-    parser.add_argument("--weight-news", type=float, default=DEFAULT_WEIGHTS["news_attention"])
-    parser.add_argument("--weight-insider", type=float, default=DEFAULT_WEIGHTS["insider_activity"])
+    parser.add_argument("--weight-momentum",     type=float, default=default_weights["price_momentum"])
+    parser.add_argument("--weight-volume",        type=float, default=default_weights["volume_surge"])
+    parser.add_argument("--weight-acceleration",  type=float, default=default_weights["price_acceleration"])
+    parser.add_argument("--weight-rsi",           type=float, default=default_weights["rsi"])
+    parser.add_argument("--weight-stochastic",    type=float, default=default_weights["stochastic"])
+    parser.add_argument("--weight-health",        type=float, default=default_weights["financial_health"])
+    parser.add_argument("--weight-news",          type=float, default=default_weights["news_attention"])
+    parser.add_argument("--weight-insider",       type=float, default=default_weights["insider_activity"])
     parser.add_argument("--save", action="store_true",
                         help="Save results to data/watchlist.parquet")
     args = parser.parse_args()
 
     weights = {
-        "price_momentum": args.weight_momentum,
-        "volume_surge": args.weight_volume,
-        "price_acceleration": args.weight_acceleration,
-        "rsi": args.weight_rsi,
-        "stochastic": args.weight_stochastic,
-        "financial_health": args.weight_health,
-        "news_attention": args.weight_news,
-        "insider_activity": args.weight_insider,
+        "price_momentum":    args.weight_momentum,
+        "volume_surge":      args.weight_volume,
+        "price_acceleration":args.weight_acceleration,
+        "rsi":               args.weight_rsi,
+        "stochastic":        args.weight_stochastic,
+        "financial_health":  args.weight_health,
+        "news_attention":    args.weight_news,
+        "insider_activity":  args.weight_insider,
     }
 
     print(f"=== Signal Runner ===")
     print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"Weights: {', '.join(f'{k}: {v:.0%}' for k, v in weights.items())}\n")
+    print(f"Weights: {', '.join(f'{k}: {v:.0%}' for k, v in weights.items() if v > 0)}\n")
 
     # Load data
     print("--- Loading data ---\n")
@@ -273,28 +299,30 @@ def main():
                    "rsi", "stochastic", "financial_health", "news_attention",
                    "insider_activity"]
     short_names = {
-        "price_momentum": "Momntm",
-        "volume_surge": "Volume",
-        "price_acceleration": "Accel",
-        "rsi": "RSI",
-        "stochastic": "Stoch",
-        "financial_health": "Health",
-        "news_attention": "News",
-        "insider_activity": "Insdr",
+        "price_momentum":    "Momntm",
+        "volume_surge":      "Volume",
+        "price_acceleration":"Accel",
+        "rsi":               "RSI",
+        "stochastic":        "Stoch",
+        "financial_health":  "Health",
+        "news_attention":    "News",
+        "insider_activity":  "Insdr",
     }
 
     header = f"{'Rank':<6}{'Ticker':<8}{'Comp':>6}"
     for col in signal_cols:
-        header += f"{short_names[col]:>7}"
+        if weights.get(col, 0) > 0:
+            header += f"{short_names[col]:>7}"
     header += f"  {'Name'}"
     print(header)
-    print("-" * 125)
+    print("-" * 110)
 
     for _, row in display.iterrows():
         line = f"{row['rank']:<6}{row['ticker']:<8}{row['composite_score']:>6.1f}"
         for col in signal_cols:
-            val = row.get(col, np.nan)
-            line += f"{val:>7.1f}" if pd.notna(val) else f"{'N/A':>7}"
+            if weights.get(col, 0) > 0:
+                val = row.get(col, np.nan)
+                line += f"{val:>7.1f}" if pd.notna(val) else f"{'N/A':>7}"
         line += f"  {str(row.get('name', ''))[:30]}"
         print(line)
 

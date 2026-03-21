@@ -3,5 +3,16 @@
     "min_market_cap": 500000000,
     "max_market_cap": 2000000000,
     "notes": "Bounds in USD. $500M–$2B mid-cap focus. Edit here to change across all scripts."
+  },
+  "signal_weights": {
+    "price_momentum": 0.20,
+    "volume_surge": 0.20,
+    "price_acceleration": 0.10,
+    "rsi": 0.00,
+    "stochastic": 0.10,
+    "financial_health": 0.15,
+    "news_attention": 0.05,
+    "insider_activity": 0.20,
+    "notes": "Must sum to 1.0. Set to 0.00 to disable a signal entirely."
   }
 }

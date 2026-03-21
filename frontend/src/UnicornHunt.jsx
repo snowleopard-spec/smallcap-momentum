@@ -14,7 +14,6 @@ const SIGNALS = [
   { key: "insider_activity", name: "Insider Buying", desc: "Form 4 insider purchases vs sales. Asymmetric: buying is strongly bullish, selling only mildly bearish.", source: "SEC EDGAR Form 4", dataFile: "insider" },
 ];
 
-const DEFAULT_WEIGHTS = { price_momentum:20, volume_surge:12, price_acceleration:12, rsi:8, stochastic:8, financial_health:15, news_attention:10, insider_activity:15 };
 const fmtCap = v => { if(!v) return "N/A"; if(v>=1e9) return "$"+(v/1e9).toFixed(2)+"B"; return "$"+(v/1e6).toFixed(0)+"M"; };
 const fmtVal = v => { if(!v&&v!==0) return "N/A"; if(v>=1e6) return "$"+(v/1e6).toFixed(1)+"M"; if(v>=1e3) return "$"+(v/1e3).toFixed(0)+"K"; return "$"+v.toFixed(0); };
 
@@ -53,24 +52,38 @@ function ProgressBar({ progress, type }) {
   );
 }
 
-function ControlPanel({ minCap, maxCap, setMinCap, setMaxCap, universeCount, onRefresh, onHardReset, onRecalc, isLoading, isRecalcing, progress, recalcProgress }) {
-  const [minErr, setMinErr] = useState("");
-  const [maxErr, setMaxErr] = useState("");
-  const validate = (min, max) => { let mE="",xE=""; if(min&&isNaN(Number(min))) mE="Numbers only"; if(max&&isNaN(Number(max))) xE="Numbers only"; if(min&&max&&Number(max)<=Number(min)) xE="Must be > Min"; setMinErr(mE); setMaxErr(xE); };
-  const inpS = { background:"#1a1a2e", border:"1px solid #333355", borderRadius:"8px 0 0 8px", padding:"14px 16px", color:"#ff6a00", fontSize:22, fontFamily:"'Press Start 2P', monospace", boxSizing:"border-box", outline:"none", flex:1, minWidth:0 };
-  const sfxS = { fontFamily:"'Press Start 2P', monospace", fontSize:18, color:"#555577", padding:"14px 12px 14px 8px", background:"#1a1a2e", border:"1px solid #333355", borderLeft:"none", borderRadius:"0 8px 8px 0", display:"flex", alignItems:"center" };
+function ControlPanel({ minCapBn, maxCapBn, universeCount, onRecalc, isLoading, isRecalcing, progress, recalcProgress }) {
+  // Cap fields are read-only — bounds are set in config.json on the server
+  const roStyle = { background:"#0e0e1a", border:"1px solid #222244", borderRadius:"8px 0 0 8px", padding:"14px 16px", color:"#666688", fontSize:22, fontFamily:"'Press Start 2P', monospace", boxSizing:"border-box", flex:1, minWidth:0, cursor:"not-allowed" };
+  const sfxS = { fontFamily:"'Press Start 2P', monospace", fontSize:18, color:"#555577", padding:"14px 12px 14px 8px", background:"#0e0e1a", border:"1px solid #222244", borderLeft:"none", borderRadius:"0 8px 8px 0", display:"flex", alignItems:"center" };
   const lblS = { fontFamily:"'IBM Plex Mono', monospace", fontSize:12, color:"#8888aa", marginBottom:4, display:"block" };
   return (
     <div style={{ maxWidth:480, margin:"0 auto", padding:"24px 20px", background:"#12121e", borderRadius:16, border:"1px solid #222244", marginTop:-40, position:"relative", zIndex:10 }}>
-      <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:16, color:"#ffffff", textAlign:"center", marginBottom:20, fontWeight:700 }}>Market Cap Range</h2>
-      <div style={{ marginBottom:12 }}><label style={lblS}>Minimum ($BN)</label><div style={{ display:"flex" }}><input style={inpS} value={minCap} placeholder="0.5" onChange={e=>{setMinCap(e.target.value);validate(e.target.value,maxCap);}} /><span style={sfxS}>B</span></div>{minErr&&<span style={{ color:"#ff4444", fontSize:10, fontFamily:"monospace" }}>{minErr}</span>}</div>
+      <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:16, color:"#ffffff", textAlign:"center", marginBottom:4, fontWeight:700 }}>Market Cap Range</h2>
+      <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:10, color:"#555577", textAlign:"center", marginBottom:16 }}>Configured in config.json — contact admin to change</p>
+      <div style={{ marginBottom:12 }}>
+        <label style={lblS}>Minimum ($BN)</label>
+        <div style={{ display:"flex" }}>
+          <input style={roStyle} value={minCapBn} readOnly />
+          <span style={sfxS}>B</span>
+        </div>
+      </div>
       <div style={{ textAlign:"center", color:"#444466", fontSize:20, margin:"4px 0" }}>↕</div>
-      <div style={{ marginBottom:16 }}><label style={lblS}>Maximum ($BN)</label><div style={{ display:"flex" }}><input style={inpS} value={maxCap} placeholder="1.5" onChange={e=>{setMaxCap(e.target.value);validate(minCap,e.target.value);}} /><span style={sfxS}>B</span></div>{maxErr&&<span style={{ color:"#ff4444", fontSize:10, fontFamily:"monospace" }}>{maxErr}</span>}</div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 0", borderTop:"1px solid #222244", marginBottom:16, fontFamily:"'IBM Plex Mono', monospace", fontSize:13, color:"#8888aa" }}><span>Universe size:</span><span style={{ color:"#ffffff", fontWeight:700 }}>{universeCount} stocks</span></div>
+      <div style={{ marginBottom:16 }}>
+        <label style={lblS}>Maximum ($BN)</label>
+        <div style={{ display:"flex" }}>
+          <input style={roStyle} value={maxCapBn} readOnly />
+          <span style={sfxS}>B</span>
+        </div>
+      </div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 0", borderTop:"1px solid #222244", marginBottom:16, fontFamily:"'IBM Plex Mono', monospace", fontSize:13, color:"#8888aa" }}>
+        <span>Universe size:</span>
+        <span style={{ color:"#ffffff", fontWeight:700 }}>{universeCount} stocks</span>
+      </div>
       <div style={{ display:"flex", gap:8 }}>
-        <button onClick={onRecalc} disabled={isLoading||isRecalcing} style={{ flex:1, padding:"14px 0", borderRadius:8, border:"none", cursor:"pointer", background:"linear-gradient(135deg, #00aa55, #00cc66)", color:"#fff", fontFamily:"'IBM Plex Mono', monospace", fontSize:13, fontWeight:700, opacity:(isLoading||isRecalcing)?0.5:1 }}>{isRecalcing?"Calculating...":"⚡ Recalc"}</button>
-        <button onClick={onRefresh} disabled={isLoading} style={{ flex:1, padding:"14px 0", borderRadius:8, border:"none", cursor:"pointer", background:"linear-gradient(135deg, #4444ff, #6666ff)", color:"#fff", fontFamily:"'IBM Plex Mono', monospace", fontSize:13, fontWeight:700, opacity:isLoading?0.5:1 }}>⟳ Refresh</button>
-        <button onClick={onHardReset} disabled={isLoading} style={{ flex:1, padding:"14px 0", borderRadius:8, border:"1px solid #444466", cursor:"pointer", background:"transparent", color:"#ff6a00", fontFamily:"'IBM Plex Mono', monospace", fontSize:13, fontWeight:700, opacity:isLoading?0.5:1 }}>⚡ Reset</button>
+        <button onClick={onRecalc} disabled={isLoading||isRecalcing} style={{ flex:1, padding:"14px 0", borderRadius:8, border:"none", cursor:"pointer", background:"linear-gradient(135deg, #00aa55, #00cc66)", color:"#fff", fontFamily:"'IBM Plex Mono', monospace", fontSize:13, fontWeight:700, opacity:(isLoading||isRecalcing)?0.5:1 }}>
+          {isRecalcing?"Calculating...":"⚡ Recalc"}
+        </button>
       </div>
       {isLoading && progress && <ProgressBar progress={progress} type="refresh" />}
       {isRecalcing && recalcProgress && <ProgressBar progress={recalcProgress} type="recalc" />}
@@ -84,10 +97,21 @@ function SignalCard({ signal, weight, onWeightChange, status }) {
   return (
     <div style={{ background:"#12121e", borderRadius:12, border:"1px solid #222244", padding:"16px 20px", marginBottom:8 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}><div style={{ width:10, height:10, borderRadius:"50%", background:isStale?"#ffcc00":"#00cc66", boxShadow:isStale?"0 0 8px #ffcc0088":"0 0 8px #00cc6688" }} /><span style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#ffffff", fontWeight:700 }}>{signal.name}</span></div>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}><span style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#666688" }}>{ageStr}</span><span style={{ fontFamily:"'Press Start 2P', monospace", fontSize:12, color:"#ff6a00", minWidth:40, textAlign:"right" }}>{weight}%</span></div>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:10, height:10, borderRadius:"50%", background:isStale?"#ffcc00":"#00cc66", boxShadow:isStale?"0 0 8px #ffcc0088":"0 0 8px #00cc6688" }} />
+          <span style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#ffffff", fontWeight:700 }}>{signal.name}</span>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <span style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#666688" }}>{ageStr}</span>
+          <span style={{ fontFamily:"'Press Start 2P', monospace", fontSize:12, color:"#ff6a00", minWidth:40, textAlign:"right" }}>{weight}%</span>
+        </div>
       </div>
-      <div style={{ position:"relative", height:24, marginBottom:8 }}><div style={{ position:"absolute", top:10, left:0, right:0, height:4, background:"#222244", borderRadius:2 }}><div style={{ height:"100%", width:weight+"%", borderRadius:2, background:"linear-gradient(90deg, #4444ff, #6666ff)" }} /></div><input type="range" min={0} max={50} value={weight} onChange={e=>onWeightChange(Number(e.target.value))} style={{ position:"absolute", top:0, left:0, width:"100%", height:24, opacity:0, cursor:"pointer" }} /></div>
+      <div style={{ position:"relative", height:24, marginBottom:8 }}>
+        <div style={{ position:"absolute", top:10, left:0, right:0, height:4, background:"#222244", borderRadius:2 }}>
+          <div style={{ height:"100%", width:weight+"%", borderRadius:2, background:"linear-gradient(90deg, #4444ff, #6666ff)" }} />
+        </div>
+        <input type="range" min={0} max={50} value={weight} onChange={e=>onWeightChange(Number(e.target.value))} style={{ position:"absolute", top:0, left:0, width:"100%", height:24, opacity:0, cursor:"pointer" }} />
+      </div>
       <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#888888", margin:0, lineHeight:1.5 }}>{signal.desc}</p>
       <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:10, color:"#555577", margin:"4px 0 0 0" }}>Source: {signal.source}</p>
     </div>
@@ -106,7 +130,7 @@ function WeightsPanel({ weights, setWeights, statuses }) {
   return (
     <div style={{ maxWidth:480, margin:"20px auto", padding:"0 20px" }}>
       <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:12, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Signal Weights</h2>
-      {SIGNALS.map(sig=><SignalCard key={sig.key} signal={sig} weight={weights[sig.key]} onWeightChange={v=>handleWeightChange(sig.key,v)} status={statuses[sig.dataFile]} />)}
+      {SIGNALS.map(sig=><SignalCard key={sig.key} signal={sig} weight={weights[sig.key]||0} onWeightChange={v=>handleWeightChange(sig.key,v)} status={statuses[sig.dataFile]} />)}
     </div>
   );
 }
@@ -165,7 +189,6 @@ function DOSTerminal({ watchlist }) {
       </div>
       <div style={{ display:"flex", gap:10, marginTop:12, justifyContent:"center" }}>
         <button onClick={exportCSV} style={{ padding:"10px 24px", borderRadius:6, border:"1px solid #333355", background:"transparent", color:"#33ff33", cursor:"pointer", fontFamily:"'IBM Plex Mono', monospace", fontSize:12 }}>↓ Export CSV</button>
-        <button onClick={exportCSV} style={{ padding:"10px 24px", borderRadius:6, border:"1px solid #333355", background:"transparent", color:"#33ff33", cursor:"pointer", fontFamily:"'IBM Plex Mono', monospace", fontSize:12 }}>↓ Export Excel</button>
       </div>
     </div>
   );
@@ -190,41 +213,114 @@ function ChartsGrid({ watchlist }) {
 }
 
 export default function UnicornHunt() {
-  const [minCap,setMinCap]=useState("0.5");const [maxCap,setMaxCap]=useState("1.5");
-  const [weights,setWeights]=useState(DEFAULT_WEIGHTS);
-  const [isLoading,setIsLoading]=useState(false);const [isRecalcing,setIsRecalcing]=useState(false);
-  const [statuses,setStatuses]=useState({});const [watchlist,setWatchlist]=useState([]);
-  const [universeCount,setUniverseCount]=useState(0);
-  const [progress,setProgress]=useState(null);const [recalcProgress,setRecalcProgress]=useState(null);
+  // Cap bounds and weights are loaded from /api/config on mount
+  const [minCapBn, setMinCapBn] = useState("0.5");
+  const [maxCapBn, setMaxCapBn] = useState("2.0");
+  const [weights, setWeights] = useState({
+    price_momentum:20, volume_surge:20, price_acceleration:10,
+    rsi:0, stochastic:10, financial_health:15, news_attention:5, insider_activity:20
+  });
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRecalcing, setIsRecalcing] = useState(false);
+  const [statuses, setStatuses] = useState({});
+  const [watchlist, setWatchlist] = useState([]);
+  const [universeCount, setUniverseCount] = useState(0);
+  const [progress, setProgress] = useState(null);
+  const [recalcProgress, setRecalcProgress] = useState(null);
 
-  useEffect(()=>{loadStatus();loadWatchlist();},[]);
-  const loadStatus=async()=>{try{const r=await axios.get(API_BASE+"/api/status");setStatuses(r.data.statuses);setUniverseCount(r.data.universe_count);}catch(e){}};
-  const loadWatchlist=async()=>{try{const r=await axios.get(API_BASE+"/api/watchlist");setWatchlist(r.data.data||[]);}catch(e){}};
-  const pollProgress=()=>{const poll=setInterval(async()=>{try{const r=await axios.get(API_BASE+"/api/progress");setProgress(r.data);if(!r.data.in_progress){clearInterval(poll);setProgress(null);setIsLoading(false);loadStatus();loadWatchlist();}}catch(e){}},1500);};
-  const handleRefresh=async()=>{setIsLoading(true);try{await axios.post(API_BASE+"/api/refresh");pollProgress();}catch(e){setIsLoading(false);}};
-  const handleHardReset=async()=>{setIsLoading(true);try{await axios.post(API_BASE+"/api/reset");pollProgress();}catch(e){setIsLoading(false);}};
-  const handleRecalc=async()=>{
-    setIsRecalcing(true);
-    setRecalcProgress({step_name:"Re-weighting scores",detail:"Calculating composite scores...",percent:30});
-    try{
-      const aw={};for(const[k,v]of Object.entries(weights))aw[k]=v/100;
-      setRecalcProgress({step_name:"Re-weighting scores",detail:"Applying new weights to "+universeCount+" stocks...",percent:60});
-      const r=await axios.post(API_BASE+"/api/recalc",{weights:aw});
-      setRecalcProgress({step_name:"Updating rankings",detail:"Sorting by composite score...",percent:90});
-      await new Promise(res=>setTimeout(res,300));
-      setWatchlist(r.data.data||[]);
-      setRecalcProgress({step_name:"Complete",detail:"Rankings updated!",percent:100});
-      await new Promise(res=>setTimeout(res,500));
-    }catch(e){console.error("Recalc failed:",e);}
-    setRecalcProgress(null);setIsRecalcing(false);
+  useEffect(() => {
+    loadConfig();
+    loadStatus();
+    loadWatchlist();
+  }, []);
+
+  const loadConfig = async () => {
+    try {
+      const r = await axios.get(API_BASE + "/api/config");
+      const cfg = r.data;
+      setMinCapBn(cfg.universe.min_market_cap_bn.toString());
+      setMaxCapBn(cfg.universe.max_market_cap_bn.toString());
+      setWeights(cfg.signal_weights);
+      setConfigLoaded(true);
+    } catch(e) {
+      console.warn("Could not load config from API, using defaults");
+      setConfigLoaded(true);
+    }
   };
+
+  const loadStatus = async () => {
+    try {
+      const r = await axios.get(API_BASE + "/api/status");
+      setStatuses(r.data.statuses);
+      setUniverseCount(r.data.universe_count);
+    } catch(e) {}
+  };
+
+  const loadWatchlist = async () => {
+    try {
+      const r = await axios.get(API_BASE + "/api/watchlist");
+      setWatchlist(r.data.data || []);
+    } catch(e) {}
+  };
+
+  const pollProgress = () => {
+    const poll = setInterval(async () => {
+      try {
+        const r = await axios.get(API_BASE + "/api/progress");
+        setProgress(r.data);
+        if (!r.data.in_progress) {
+          clearInterval(poll);
+          setProgress(null);
+          setIsLoading(false);
+          loadStatus();
+          loadWatchlist();
+        }
+      } catch(e) {}
+    }, 1500);
+  };
+
+  const handleRecalc = async () => {
+    setIsRecalcing(true);
+    setRecalcProgress({ step_name:"Re-weighting scores", detail:"Calculating composite scores...", percent:30 });
+    try {
+      const aw = {};
+      for (const [k, v] of Object.entries(weights)) aw[k] = v / 100;
+      setRecalcProgress({ step_name:"Re-weighting scores", detail:"Applying new weights to "+universeCount+" stocks...", percent:60 });
+      const r = await axios.post(API_BASE + "/api/recalc", { weights: aw });
+      setRecalcProgress({ step_name:"Updating rankings", detail:"Sorting by composite score...", percent:90 });
+      await new Promise(res => setTimeout(res, 300));
+      setWatchlist(r.data.data || []);
+      setRecalcProgress({ step_name:"Complete", detail:"Rankings updated!", percent:100 });
+      await new Promise(res => setTimeout(res, 500));
+    } catch(e) {
+      console.error("Recalc failed:", e);
+    }
+    setRecalcProgress(null);
+    setIsRecalcing(false);
+  };
+
+  if (!configLoaded) return (
+    <div style={{ minHeight:"100vh", background:"#08080f", display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <p style={{ fontFamily:"'IBM Plex Mono', monospace", color:"#555577" }}>Loading...</p>
+    </div>
+  );
 
   return (
     <div style={{ minHeight:"100vh", width:"100%", background:"linear-gradient(180deg, #08080f 0%, #0c0c18 50%, #08080f 100%)", color:"#ffffff" }}>
       <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
       <style>{"@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}*{box-sizing:border-box}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#6666ff;cursor:pointer}::selection{background:#ff6a0044}::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:#0a0a14}::-webkit-scrollbar-thumb{background:#333355;border-radius:3px}"}</style>
       <HeroBanner />
-      <ControlPanel minCap={minCap} maxCap={maxCap} setMinCap={setMinCap} setMaxCap={setMaxCap} universeCount={universeCount} onRefresh={handleRefresh} onHardReset={handleHardReset} onRecalc={handleRecalc} isLoading={isLoading} isRecalcing={isRecalcing} progress={progress} recalcProgress={recalcProgress} />
+      <ControlPanel
+        minCapBn={minCapBn}
+        maxCapBn={maxCapBn}
+        universeCount={universeCount}
+        onRecalc={handleRecalc}
+        isLoading={isLoading}
+        isRecalcing={isRecalcing}
+        progress={progress}
+        recalcProgress={recalcProgress}
+      />
       <WeightsPanel weights={weights} setWeights={setWeights} statuses={statuses} />
       <DOSTerminal watchlist={watchlist} />
       <ChartsGrid watchlist={watchlist} />

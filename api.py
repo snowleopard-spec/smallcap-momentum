@@ -296,7 +296,14 @@ def get_status():
         }
     universe_count = 0
     if os.path.exists(DATA_FILES["universe"]):
-        universe_count = len(pd.read_parquet(DATA_FILES["universe"]))
+        df_uni = pd.read_parquet(DATA_FILES["universe"])
+        cfg = load_config()
+        min_cap = cfg["universe"]["min_market_cap"]
+        max_cap = cfg["universe"]["max_market_cap"]
+        universe_count = len(df_uni[
+            (df_uni["market_cap"] >= min_cap) &
+            (df_uni["market_cap"] <= max_cap)
+        ])
     return {
         "statuses": statuses,
         "universe_count": universe_count,

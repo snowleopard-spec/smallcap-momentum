@@ -183,7 +183,7 @@ function DOSTerminal({ watchlist }) {
                 {xr===row.rank&&<DetailPanel row={row}/>}
               </span>
             ))}
-            <span style={{ color:"#888888" }}>{dv}</span>{"\n"}<span style={{ color:"#ffcc00" }}>C:\UNICORN&gt;</span><span style={{ animation:"blink 1s infinite" }}>_</span>
+            <span style={{ color:"#888888" }}>{dv}</span>{"\n"}<span style={{ color:"#ffcc00" }}>C:\UNICORN&gt;</span>{" "}<a href="/Signal_Engine_Mathematical_Specification.pdf" target="_blank" rel="noopener noreferrer" style={{ color:"#33ff33", textDecoration:"none" }} onMouseEnter={e=>e.target.style.color="#ffcc00"} onMouseLeave={e=>e.target.style.color="#33ff33"}>TECHNICAL_DOC.PDF</a>{"\n\n"}<span style={{ color:"#ffcc00" }}>C:\UNICORN&gt;</span><span style={{ animation:"blink 1s infinite" }}>_</span>
           </pre>
         </div>
       </div>
@@ -327,3 +327,6 @@ export default function UnicornHunt() {
     </div>
   );
 }
+
+
+

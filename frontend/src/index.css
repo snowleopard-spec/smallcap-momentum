@@ -1,1 +1,13 @@
-/* Cleared - all styling in App.css and inline */
+/* Reset browser defaults to eliminate white border/margin on all devices */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  min-height: 100vh;
+  background: #08080f;
+  overflow-x: hidden;
+}

@@ -20,6 +20,7 @@ import sys
 import re
 import time
 import json
+import math
 import subprocess
 import traceback
 import threading
@@ -45,8 +46,8 @@ DATA_FILES = {
 }
 
 # Email
-RECIPIENT = "wes.hunt1@outlook.com"  # ← change to your actual address
-SENDER = "onboarding@resend.dev"  # ← must match a verified Resend domain
+RECIPIENT = "wes@unicornpunk.org"  # ← change to your actual address
+SENDER = "Unicorn Hunt <monitor@unicornpunk.org>"  # ← must match a verified Resend domain
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -594,6 +595,314 @@ def send_email(report):
         return False
 
 
+# ── Watchlist Email ────────────────────────────────────────────────────────────
+
+SIC_SECTORS = {
+    "28": "PHRM", "29": "PETR", "13": "OIL", "10": "MINE", "12": "MINE",
+    "14": "MINE", "20": "FOOD", "35": "MACH", "36": "ELEC", "37": "TRAN",
+    "38": "INST", "48": "TELC", "49": "UTIL", "50": "WHSL", "51": "WHSL",
+    "52": "RETL", "53": "RETL", "54": "RETL", "55": "RETL", "56": "RETL",
+    "57": "RETL", "58": "RETL", "59": "RETL", "60": "BANK", "61": "FIN",
+    "62": "FIN", "63": "INSR", "64": "INSR", "65": "REAL", "67": "FIN",
+    "73": "TECH", "80": "HLTH", "87": "ENGR", "15": "CNST", "16": "CNST",
+    "17": "CNST", "27": "PRNT", "30": "RUBR", "33": "METL", "34": "METL",
+    "39": "MISC", "40": "RAIL", "42": "TRUK", "44": "SHIP", "45": "AIRL",
+    "47": "TRVL", "70": "HOTL", "72": "SVCS", "75": "AUTO", "76": "SVCS",
+    "78": "MDIA", "79": "ENTR", "82": "EDUC", "83": "SOCL", "86": "MEMB",
+}
+
+
+def get_sector(sic_code):
+    if not sic_code:
+        return "—"
+    return SIC_SECTORS.get(str(sic_code)[:2], "OTHR")
+
+
+def fmt_cap(v):
+    if not v:
+        return "N/A"
+    if v >= 1e9:
+        return f"${v / 1e9:.2f}B"
+    return f"${v / 1e6:.0f}M"
+
+
+def load_watchlist_top20():
+    """
+    Load the watchlist and enrich with universe/fundamentals/insider/price data.
+    Returns top 20 as a list of dicts, or None if data is missing.
+    """
+    import pandas as pd
+
+    watchlist_path = DATA_DIR / "watchlist.parquet"
+    if not watchlist_path.exists():
+        return None
+
+    df = pd.read_parquet(watchlist_path)
+    df = df.sort_values("rank").head(20)
+
+    # Load enrichment data
+    universe = {}
+    uni_path = DATA_DIR / "universe.parquet"
+    if uni_path.exists():
+        for _, row in pd.read_parquet(uni_path).iterrows():
+            universe[row["ticker"]] = {
+                "market_cap": float(row.get("market_cap", 0)),
+                "sic_code": str(row.get("sic_code", "")),
+            }
+
+    fundamentals = {}
+    fund_path = DATA_DIR / "fundamentals.parquet"
+    if fund_path.exists():
+        for _, row in pd.read_parquet(fund_path).iterrows():
+            fundamentals[row["ticker"]] = {
+                "current_ratio": row.get("current_ratio"),
+                "debt_to_equity": row.get("debt_to_equity"),
+                "net_margin": row.get("net_margin"),
+            }
+
+    insider_data = {}
+    ins_path = DATA_DIR / "insider_activity.parquet"
+    if ins_path.exists():
+        for _, row in pd.read_parquet(ins_path).iterrows():
+            insider_data[row["ticker"]] = {
+                "insider_buys": int(row.get("insider_buys", 0)),
+                "insider_sells": int(row.get("insider_sells", 0)),
+                "net_buy_value": float(row.get("net_buy_value", 0)),
+            }
+
+    price_info = {}
+    prices_path = DATA_DIR / "prices_combined.parquet"
+    if prices_path.exists():
+        tickers = df["ticker"].unique().tolist()
+        pdf = pd.read_parquet(prices_path, filters=[("ticker", "in", tickers)])
+        pdf["date"] = pd.to_datetime(pdf["date"])
+        cutoff = pdf["date"].max() - pd.Timedelta(days=30)
+        pdf = pdf[pdf["date"] >= cutoff]
+        for ticker in tickers:
+            tdf = pdf[pdf["ticker"] == ticker].sort_values("date")
+            if len(tdf) >= 6:
+                latest = float(tdf.iloc[-1]["close"])
+                prev = float(tdf.iloc[-6]["close"])
+                chg = round((latest - prev) / prev * 100, 1) if prev > 0 else 0
+                price_info[ticker] = {"price": round(latest, 2), "change_7d": chg}
+
+    def safe_round(val, decimals=1):
+        if val is None:
+            return None
+        try:
+            f = float(val)
+            return None if math.isnan(f) else round(f, decimals)
+        except (TypeError, ValueError):
+            return None
+
+    results = []
+    for _, row in df.iterrows():
+        ticker = row["ticker"]
+        uni = universe.get(ticker, {})
+        fund = fundamentals.get(ticker, {})
+        ins = insider_data.get(ticker, {})
+        pi = price_info.get(ticker, {})
+        results.append({
+            "rank": int(row.get("rank", 0)),
+            "ticker": ticker,
+            "name": row.get("name", ""),
+            "sector": get_sector(uni.get("sic_code")),
+            "market_cap": uni.get("market_cap"),
+            "composite": safe_round(row.get("composite_score")),
+            "price_momentum": safe_round(row.get("price_momentum")),
+            "volume_surge": safe_round(row.get("volume_surge")),
+            "financial_health": safe_round(row.get("financial_health")),
+            "insider_activity": safe_round(row.get("insider_activity")),
+            "price": pi.get("price"),
+            "change_7d": pi.get("change_7d"),
+            "net_margin": safe_round(fund.get("net_margin"), 4),
+            "insider_buys": ins.get("insider_buys", 0),
+            "insider_sells": ins.get("insider_sells", 0),
+            "net_buy_value": ins.get("net_buy_value", 0),
+        })
+
+    return results
+
+
+def build_watchlist_email_html(stocks):
+    """Build a clean watchlist email showing the top 20 ranked stocks."""
+
+    today = datetime.now(timezone.utc).strftime("%d %b %Y")
+
+    # Build table rows
+    rows_html = ""
+    for s in stocks:
+        # Composite score color
+        comp = s["composite"] or 0
+        if comp >= 75:
+            comp_color = "#22c55e"
+        elif comp >= 65:
+            comp_color = "#a3e635"
+        elif comp >= 55:
+            comp_color = "#e2e8f0"
+        else:
+            comp_color = "#94a3b8"
+
+        # 7d change color
+        chg = s.get("change_7d")
+        if chg is not None:
+            chg_color = "#22c55e" if chg >= 0 else "#ef4444"
+            chg_str = f'{"+" if chg >= 0 else ""}{chg}%'
+        else:
+            chg_color = "#64748b"
+            chg_str = "—"
+
+        # Price
+        price_str = f'${s["price"]:.2f}' if s.get("price") else "—"
+
+        # Market cap
+        cap_str = fmt_cap(s.get("market_cap"))
+
+        # Insider indicator
+        buys = s.get("insider_buys", 0)
+        sells = s.get("insider_sells", 0)
+        if buys > 0 and sells == 0:
+            insider_str = f'<span style="color:#22c55e;">{buys}B</span>'
+        elif buys > 0 and sells > 0:
+            insider_str = f'<span style="color:#22c55e;">{buys}B</span>/<span style="color:#ef4444;">{sells}S</span>'
+        elif sells > 0:
+            insider_str = f'<span style="color:#ef4444;">{sells}S</span>'
+        else:
+            insider_str = '<span style="color:#4a4a6a;">—</span>'
+
+        # Signal scores — show top 4 weighted signals as compact pills
+        signals = []
+        for key, label in [("price_momentum", "MOM"), ("volume_surge", "VOL"), ("financial_health", "FIN"), ("insider_activity", "INS")]:
+            val = s.get(key)
+            if val is not None:
+                if val >= 70:
+                    pill_bg = "#1a2e1a"
+                    pill_color = "#22c55e"
+                elif val <= 30:
+                    pill_bg = "#2e1a1a"
+                    pill_color = "#ef4444"
+                else:
+                    pill_bg = "#1a1a2e"
+                    pill_color = "#94a3b8"
+                signals.append(f'<span style="background:{pill_bg};color:{pill_color};padding:1px 5px;border-radius:3px;font-size:10px;margin-right:2px;">{label} {val:.0f}</span>')
+
+        signals_html = " ".join(signals)
+
+        # Name — truncate to 25 chars
+        name = s.get("name", "")
+        if len(name) > 25:
+            name = name[:24] + "…"
+
+        rows_html += f"""
+        <tr style="border-bottom:1px solid #1e1e2e;">
+            <td style="padding:10px 8px;text-align:center;color:#ff6a00;font-weight:700;font-size:13px;">{s['rank']}</td>
+            <td style="padding:10px 8px;">
+                <div style="color:#ffffff;font-weight:600;font-size:13px;">{s['ticker']}</div>
+                <div style="color:#64748b;font-size:10px;">{name}</div>
+            </td>
+            <td style="padding:10px 8px;text-align:center;color:#94a3b8;font-size:11px;">{s['sector']}</td>
+            <td style="padding:10px 8px;text-align:center;color:{comp_color};font-weight:700;font-size:14px;">{comp:.1f}</td>
+            <td style="padding:10px 8px;text-align:right;color:#e2e8f0;font-size:12px;">{price_str}</td>
+            <td style="padding:10px 8px;text-align:right;color:{chg_color};font-size:12px;font-weight:600;">{chg_str}</td>
+            <td style="padding:10px 8px;text-align:right;color:#94a3b8;font-size:11px;">{cap_str}</td>
+            <td style="padding:10px 8px;text-align:center;font-size:11px;">{insider_str}</td>
+        </tr>
+        <tr style="border-bottom:1px solid #2e2e4e;">
+            <td colspan="8" style="padding:2px 8px 8px 40px;">{signals_html}</td>
+        </tr>"""
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"></head>
+    <body style="margin:0;padding:0;background:#08080f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+        <div style="max-width:720px;margin:0 auto;background:#12121f;border:1px solid #1e1e2e;">
+
+            <!-- Header -->
+            <div style="background:linear-gradient(135deg,#1a0a1a,#0a0a1a);padding:24px;border-bottom:2px solid #ff6a0055;text-align:center;">
+                <div style="font-family:'Courier New',monospace;font-size:20px;font-weight:700;color:#fff;letter-spacing:3px;">UNICORN HUNT</div>
+                <div style="font-family:'Courier New',monospace;font-size:11px;color:#ff6a0099;letter-spacing:2px;margin-top:4px;">DAILY WATCHLIST — TOP 20</div>
+                <div style="font-family:'Courier New',monospace;font-size:10px;color:#4a4a6a;margin-top:8px;">{today}</div>
+            </div>
+
+            <div style="padding:16px;">
+                <table style="width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+                    <thead>
+                        <tr style="border-bottom:2px solid #2e2e4e;">
+                            <th style="padding:8px;text-align:center;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;">#</th>
+                            <th style="padding:8px;text-align:left;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Ticker</th>
+                            <th style="padding:8px;text-align:center;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Sec</th>
+                            <th style="padding:8px;text-align:center;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Score</th>
+                            <th style="padding:8px;text-align:right;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Price</th>
+                            <th style="padding:8px;text-align:right;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;">7d</th>
+                            <th style="padding:8px;text-align:right;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Cap</th>
+                            <th style="padding:8px;text-align:center;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Insider</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows_html}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Footer -->
+            <div style="padding:16px 24px;border-top:1px solid #1e1e2e;text-align:center;">
+                <div style="margin-bottom:8px;">
+                    <a href="https://unicornpunk.org" style="color:#ff6a00;font-size:12px;text-decoration:none;font-family:'Courier New',monospace;">View full watchlist on unicornpunk.org →</a>
+                </div>
+                <div style="color:#4a4a6a;font-size:10px;">
+                    Signal pills: <span style="color:#22c55e;">MOM</span>=Momentum <span style="color:#22c55e;">VOL</span>=Volume <span style="color:#22c55e;">FIN</span>=Financial Health <span style="color:#22c55e;">INS</span>=Insider &nbsp;|&nbsp; <span style="color:#22c55e;">Green ≥70</span> &nbsp; <span style="color:#ef4444;">Red ≤30</span>
+                </div>
+            </div>
+
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+
+def send_watchlist_email():
+    """Load watchlist and send as a separate email."""
+    stocks = load_watchlist_top20()
+    if not stocks:
+        print("[monitor] No watchlist data found, skipping watchlist email.")
+        return False
+
+    try:
+        import resend
+    except ImportError:
+        print("[monitor] ERROR: 'resend' package not installed.")
+        return False
+
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_DIR / ".env")
+
+    api_key = os.environ.get("RESEND_API_KEY")
+    if not api_key:
+        print("[monitor] ERROR: RESEND_API_KEY not set.")
+        return False
+
+    resend.api_key = api_key
+
+    today = datetime.now(timezone.utc).strftime("%d %b %Y")
+    top_ticker = stocks[0]["ticker"] if stocks else "?"
+    subject = f"[Unicorn Hunt] Top 20 Watchlist — {today} — #{1} {top_ticker}"
+
+    try:
+        result = resend.Emails.send({
+            "from": SENDER,
+            "to": [RECIPIENT],
+            "subject": subject,
+            "html": build_watchlist_email_html(stocks),
+        })
+        print(f"[monitor] Watchlist email sent. ID: {result.get('id', 'unknown')}")
+        return True
+    except Exception as e:
+        print(f"[monitor] Failed to send watchlist email: {e}")
+        return False
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -619,9 +928,19 @@ def main():
         html = build_email_html(report)
         out_path = PROJECT_DIR / "monitor_preview.html"
         out_path.write_text(html)
-        print(f"[monitor] Preview written to {out_path}")
+        print(f"[monitor] Report preview written to {out_path}")
+
+        # Also preview watchlist email
+        stocks = load_watchlist_top20()
+        if stocks:
+            wl_html = build_watchlist_email_html(stocks)
+            wl_path = PROJECT_DIR / "watchlist_preview.html"
+            wl_path.write_text(wl_html)
+            print(f"[monitor] Watchlist preview written to {wl_path}")
     else:
         send_email(report)
+        if report["success"]:
+            send_watchlist_email()
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ DATA_FILES = {
 }
 
 # Email
-RECIPIENT = "wes@unicornpunk.org"  # ← change to your actual address
+RECIPIENT = "wes.hunt1@outlook.com"  # ← change to your actual address
 SENDER = "Unicorn Hunt <onboarding@resend.dev>"  # ← must match a verified Resend domain
 
 

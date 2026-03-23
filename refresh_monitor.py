@@ -47,7 +47,7 @@ DATA_FILES = {
 
 # Email
 RECIPIENT = "wes@unicornpunk.org"  # ← change to your actual address
-SENDER = "Unicorn Hunt <monitor@unicornpunk.org>"  # ← must match a verified Resend domain
+SENDER = "Unicorn Hunt <onboarding@resend.dev>"  # ← must match a verified Resend domain
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

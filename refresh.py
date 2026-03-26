@@ -101,8 +101,7 @@ def main():
         else: run_command("Refreshing universe", f"{PYTHON} src/data/universe.py --refresh")
 
         print("\n--- Step 2/5: Prices ---")
-        if not args.force and not is_stale("prices"): print("  Up to date, skipping")
-        elif os.path.exists("data/prices_combined.parquet"): run_command("Refreshing prices", f"{PYTHON} src/data/fetch_prices.py --refresh")
+        if os.path.exists("data/prices_combined.parquet"): run_command("Refreshing prices", f"{PYTHON} src/data/fetch_prices.py --refresh")
         else: run_command("Fetching full price history", f"{PYTHON} src/data/fetch_prices.py")
 
         print("\n--- Step 3/5: News ---")

@@ -1,5 +1,5 @@
 """
-Unicorn Hunt API v1.3
+Unicorn Hunt API v1.4
 
 Run with: uvicorn api:app --reload --port 8000
 """
@@ -22,7 +22,7 @@ from typing import Dict
 # ensures subprocess calls work in cron without venv activation issues.
 PYTHON = sys.executable
 
-app = FastAPI(title="Unicorn Hunt API", version="1.3")
+app = FastAPI(title="Unicorn Hunt API", version="1.4")
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,10 +45,13 @@ DATA_FILES = {
     "news": "data/news_attention.parquet",
     "insider": "data/insider_activity.parquet",
     "watchlist": "data/watchlist.parquet",
+    "risk_metrics": "data/risk_metrics.parquet",
+    "benchmark": "data/benchmark_iwm.parquet",
 }
 
 STALENESS = {
     "universe": 7, "prices": 1, "fundamentals": 30, "news": 1, "insider": 14,
+    "benchmark": 1,
 }
 
 SIC_SECTORS = {
@@ -67,6 +70,7 @@ SIC_SECTORS = {
 
 PROGRESS_FILE = "data/.refresh_progress.json"
 CONFIG_FILE = "config.json"
+RISK_METRICS_CONFIG_FILE = "risk_metrics_config.json"
 refresh_in_progress = False
 
 # Fallback config if config.json is missing
@@ -87,6 +91,17 @@ _FALLBACK_CONFIG = {
     }
 }
 
+_FALLBACK_RISK_CONFIG = {
+    "lookback_days": 63,
+    "benchmark_ticker": "IWM",
+    "benchmark_staleness_days": 1,
+    "weights": {
+        "sharpe": 0.34,
+        "ir_universe": 0.33,
+        "ir_russell": 0.33,
+    },
+}
+
 
 def load_config():
     """Load config.json, return fallback if missing."""
@@ -95,6 +110,17 @@ def load_config():
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return _FALLBACK_CONFIG
+
+
+def load_risk_metrics_config():
+    """Load risk_metrics_config.json, return fallback if missing."""
+    try:
+        with open(RISK_METRICS_CONFIG_FILE) as f:
+            cfg = json.load(f)
+        cfg.get("weights", {}).pop("notes", None)
+        return cfg
+    except (FileNotFoundError, json.JSONDecodeError):
+        return _FALLBACK_RISK_CONFIG.copy()
 
 
 def write_progress(step, total_steps, step_name, detail="", percent=0):
@@ -120,7 +146,7 @@ def read_progress():
                 return json.load(f)
     except Exception:
         pass
-    return {"step": 0, "total_steps": 6, "step_name": "", "detail": "", "percent": 0}
+    return {"step": 0, "total_steps": 7, "step_name": "", "detail": "", "percent": 0}
 
 
 def clear_progress():
@@ -163,6 +189,37 @@ def safe_round(val, decimals=1):
         return None
 
 
+def load_universe_map():
+    """Load universe data as a ticker-keyed dict for enrichment."""
+    universe = {}
+    if os.path.exists(DATA_FILES["universe"]):
+        for _, row in pd.read_parquet(DATA_FILES["universe"]).iterrows():
+            universe[row["ticker"]] = {
+                "market_cap": float(row.get("market_cap", 0)),
+                "sic_code": str(row.get("sic_code", "")),
+                "name": row.get("name", ""),
+            }
+    return universe
+
+
+def load_price_info(tickers):
+    """Load recent price info for a list of tickers."""
+    price_info = {}
+    if os.path.exists(DATA_FILES["prices"]):
+        pdf = pd.read_parquet(DATA_FILES["prices"], filters=[("ticker", "in", tickers)])
+        pdf["date"] = pd.to_datetime(pdf["date"])
+        cutoff = pdf["date"].max() - pd.Timedelta(days=30)
+        pdf = pdf[pdf["date"] >= cutoff]
+        for ticker in tickers:
+            tdf = pdf[pdf["ticker"] == ticker].sort_values("date")
+            if len(tdf) >= 6:
+                latest = float(tdf.iloc[-1]["close"])
+                prev = float(tdf.iloc[-6]["close"])
+                chg = round((latest - prev) / prev * 100, 1) if prev > 0 else 0
+                price_info[ticker] = {"price": round(latest, 2), "change_7d": chg}
+    return price_info
+
+
 def build_watchlist_response(watchlist_path=None):
     if watchlist_path is None:
         watchlist_path = DATA_FILES["watchlist"]
@@ -170,14 +227,7 @@ def build_watchlist_response(watchlist_path=None):
         return {"error": "No watchlist found.", "data": []}
 
     df = pd.read_parquet(watchlist_path)
-
-    universe = {}
-    if os.path.exists(DATA_FILES["universe"]):
-        for _, row in pd.read_parquet(DATA_FILES["universe"]).iterrows():
-            universe[row["ticker"]] = {
-                "market_cap": float(row.get("market_cap", 0)),
-                "sic_code": str(row.get("sic_code", "")),
-            }
+    universe = load_universe_map()
 
     fundamentals = {}
     if os.path.exists(DATA_FILES["fundamentals"]):
@@ -199,20 +249,8 @@ def build_watchlist_response(watchlist_path=None):
                 "net_buy_value": float(row.get("net_buy_value", 0)),
             }
 
-    price_info = {}
-    if os.path.exists(DATA_FILES["prices"]):
-        watchlist_tickers = df["ticker"].unique().tolist()
-        pdf = pd.read_parquet(DATA_FILES["prices"], filters=[("ticker", "in", watchlist_tickers)])
-        pdf["date"] = pd.to_datetime(pdf["date"])
-        cutoff = pdf["date"].max() - pd.Timedelta(days=30)
-        pdf = pdf[pdf["date"] >= cutoff]
-        for ticker in watchlist_tickers:
-            tdf = pdf[pdf["ticker"] == ticker].sort_values("date")
-            if len(tdf) >= 6:
-                latest = float(tdf.iloc[-1]["close"])
-                prev = float(tdf.iloc[-6]["close"])
-                chg = round((latest - prev) / prev * 100, 1) if prev > 0 else 0
-                price_info[ticker] = {"price": round(latest, 2), "change_7d": chg}
+    watchlist_tickers = df["ticker"].unique().tolist()
+    price_info = load_price_info(watchlist_tickers)
 
     results = []
     for _, row in df.iterrows():
@@ -224,7 +262,7 @@ def build_watchlist_response(watchlist_path=None):
         results.append({
             "rank": int(row.get("rank", 0)),
             "ticker": ticker,
-            "name": row.get("name", ""),
+            "name": row.get("name", uni.get("name", "")),
             "sector": get_sector(uni.get("sic_code")),
             "market_cap": uni.get("market_cap"),
             "composite": safe_round(row.get("composite_score")),
@@ -250,6 +288,51 @@ def build_watchlist_response(watchlist_path=None):
     return {"data": results}
 
 
+def build_risk_metrics_response(rm_path=None):
+    """Build enriched risk metrics response from parquet file."""
+    if rm_path is None:
+        rm_path = DATA_FILES["risk_metrics"]
+    if not os.path.exists(rm_path):
+        return {"error": "No risk metrics found. Run risk_metrics.py first.", "data": []}
+
+    df = pd.read_parquet(rm_path)
+    universe = load_universe_map()
+    rm_tickers = df["ticker"].unique().tolist()
+    price_info = load_price_info(rm_tickers)
+    rm_config = load_risk_metrics_config()
+
+    results = []
+    for _, row in df.iterrows():
+        ticker = row["ticker"]
+        uni = universe.get(ticker, {})
+        pi = price_info.get(ticker, {})
+
+        results.append({
+            "rank": int(row.get("rank", 0)),
+            "ticker": ticker,
+            "name": uni.get("name", ""),
+            "sector": get_sector(uni.get("sic_code")),
+            "market_cap": uni.get("market_cap"),
+            "composite": safe_round(row.get("composite")),
+            "sharpe": safe_round(row.get("sharpe"), 2),
+            "sharpe_pctile": safe_round(row.get("sharpe_pctile")),
+            "ir_universe": safe_round(row.get("ir_universe"), 2),
+            "ir_universe_pctile": safe_round(row.get("ir_universe_pctile")),
+            "ir_russell": safe_round(row.get("ir_russell"), 2),
+            "ir_russell_pctile": safe_round(row.get("ir_russell_pctile")),
+            "price": pi.get("price"),
+            "change_7d": pi.get("change_7d"),
+        })
+
+    return {
+        "data": results,
+        "config": {
+            "lookback_days": rm_config.get("lookback_days", 63),
+            "weights": rm_config.get("weights", {}),
+        },
+    }
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/config")
@@ -262,7 +345,6 @@ def get_config():
     universe = cfg.get("universe", _FALLBACK_CONFIG["universe"])
     raw_weights = cfg.get("signal_weights", _FALLBACK_CONFIG["signal_weights"])
 
-    # Strip notes key, convert decimals to percentages for frontend sliders
     weights_pct = {
         k: round(v * 100)
         for k, v in raw_weights.items()
@@ -280,11 +362,32 @@ def get_config():
     }
 
 
+@app.get("/api/risk-metrics-config")
+def get_risk_metrics_config():
+    """
+    Serve risk_metrics_config.json to the frontend.
+    Returns weights as percentages (0-100) for slider display.
+    """
+    cfg = load_risk_metrics_config()
+    raw_weights = cfg.get("weights", _FALLBACK_RISK_CONFIG["weights"])
+
+    weights_pct = {
+        k: round(v * 100)
+        for k, v in raw_weights.items()
+    }
+
+    return {
+        "lookback_days": cfg.get("lookback_days", 63),
+        "benchmark_ticker": cfg.get("benchmark_ticker", "IWM"),
+        "weights": weights_pct,
+    }
+
+
 @app.get("/api/status")
 def get_status():
     statuses = {}
     for name, filepath in DATA_FILES.items():
-        if name == "watchlist":
+        if name in ("watchlist", "risk_metrics"):
             continue
         age = get_file_age_days(filepath)
         max_age = STALENESS.get(name, 999)
@@ -334,13 +437,19 @@ def get_prices(ticker: str, days: int = 365):
     }
 
 
+@app.get("/api/risk-metrics")
+def get_risk_metrics():
+    """Serve ranked risk-adjusted metrics, enriched with price/name/sector."""
+    return build_risk_metrics_response()
+
+
 @app.get("/api/progress")
 def get_progress():
     prog = read_progress()
     return {
         "in_progress": refresh_in_progress,
         "step": prog.get("step", 0),
-        "total_steps": prog.get("total_steps", 6),
+        "total_steps": prog.get("total_steps", 7),
         "step_name": prog.get("step_name", ""),
         "detail": prog.get("detail", ""),
         "percent": prog.get("percent", 0),
@@ -353,6 +462,7 @@ class RecalcRequest(BaseModel):
 
 @app.post("/api/recalc")
 def recalc_watchlist(req: RecalcRequest):
+    """Re-rank momentum watchlist with custom signal weights."""
     weights = req.weights
     total = sum(weights.values())
     if total <= 0:
@@ -365,7 +475,6 @@ def recalc_watchlist(req: RecalcRequest):
 
     df = pd.read_parquet(watchlist_path)
 
-    # Only score signals with non-zero weight
     signal_columns = [k for k in weights.keys() if k in df.columns and weights.get(k, 0) > 0]
 
     def weighted_score(row):
@@ -373,7 +482,6 @@ def recalc_watchlist(req: RecalcRequest):
         total_w = 0
         for col in signal_columns:
             val = row.get(col)
-            # Treat missing/NaN as neutral 50 — consistent with runner.py
             if val is None or (isinstance(val, float) and math.isnan(val)):
                 val = 50.0
             total_s += val * weights.get(col, 0)
@@ -389,13 +497,66 @@ def recalc_watchlist(req: RecalcRequest):
     return build_watchlist_response(watchlist_path)
 
 
+@app.post("/api/recalc-risk")
+def recalc_risk_metrics(req: RecalcRequest):
+    """
+    Re-rank risk metrics with custom weights.
+    Accepts weights like {"sharpe": 0.5, "ir_universe": 0.25, "ir_russell": 0.25}.
+    Re-blends the percentile scores and re-ranks, no refetch needed.
+    """
+    weights = req.weights
+    total = sum(weights.values())
+    if total <= 0:
+        return {"error": "Weights must sum to > 0"}
+    weights = {k: v / total for k, v in weights.items()}
+
+    rm_path = DATA_FILES["risk_metrics"]
+    if not os.path.exists(rm_path):
+        return {"error": "No risk metrics found.", "data": []}
+
+    df = pd.read_parquet(rm_path)
+
+    # Re-compute percentile ranks from raw values (in case they shifted)
+    for col in ["sharpe", "ir_universe", "ir_russell"]:
+        if col in df.columns:
+            df[f"{col}_pctile"] = df[col].rank(pct=True) * 100
+
+    w_sharpe = weights.get("sharpe", 0.34)
+    w_ir_uni = weights.get("ir_universe", 0.33)
+    w_ir_russ = weights.get("ir_russell", 0.33)
+
+    def weighted_composite(row):
+        total_score = 0
+        total_weight = 0
+
+        if pd.notna(row.get("sharpe_pctile")):
+            total_score += row["sharpe_pctile"] * w_sharpe
+            total_weight += w_sharpe
+        if pd.notna(row.get("ir_universe_pctile")):
+            total_score += row["ir_universe_pctile"] * w_ir_uni
+            total_weight += w_ir_uni
+        if pd.notna(row.get("ir_russell_pctile")):
+            total_score += row["ir_russell_pctile"] * w_ir_russ
+            total_weight += w_ir_russ
+
+        return total_score / total_weight if total_weight > 0 else np.nan
+
+    df["composite"] = df.apply(weighted_composite, axis=1)
+    df = df.dropna(subset=["composite"])
+    df["rank"] = df["composite"].rank(ascending=False).astype(int)
+    df = df.sort_values("rank")
+    df.to_parquet(rm_path, index=False)
+
+    return build_risk_metrics_response(rm_path)
+
+
 @app.post("/api/refresh")
 def trigger_refresh(background_tasks: BackgroundTasks):
     global refresh_in_progress
     if refresh_in_progress:
         return {"status": "already_running"}
     refresh_in_progress = True
-    write_progress(0, 6, "Starting...", "", 0)
+    write_progress(0, 7, "Starting...", "", 0)
     background_tasks.add_task(run_refresh_with_progress, force=False)
     return {"status": "started"}
 
@@ -406,21 +567,21 @@ def trigger_reset(background_tasks: BackgroundTasks):
     if refresh_in_progress:
         return {"status": "already_running"}
     refresh_in_progress = True
-    write_progress(0, 6, "Starting...", "", 0)
+    write_progress(0, 7, "Starting...", "", 0)
     background_tasks.add_task(run_refresh_with_progress, force=True)
     return {"status": "started"}
 
 
-def run_step(step_num, step_name, command, force=False, skip=False):
-    base_pct = int((step_num - 1) / 6 * 100)
-    step_pct = int(step_num / 6 * 100)
+def run_step(step_num, step_name, command, total_steps=7, force=False, skip=False):
+    base_pct = int((step_num - 1) / total_steps * 100)
+    step_pct = int(step_num / total_steps * 100)
 
     if skip:
-        write_progress(step_num, 6, step_name, "up to date, skipped", step_pct)
+        write_progress(step_num, total_steps, step_name, "up to date, skipped", step_pct)
         time.sleep(0.3)
         return
 
-    write_progress(step_num, 6, step_name, "starting...", base_pct)
+    write_progress(step_num, total_steps, step_name, "starting...", base_pct)
 
     process = subprocess.Popen(
         command, shell=True,
@@ -437,49 +598,53 @@ def run_step(step_num, step_name, command, force=False, skip=False):
                     sub_pct = int(pct_str)
                     overall_pct = base_pct + int(sub_pct / 100 * (step_pct - base_pct))
                     detail = line.split("|")[0].strip() if "|" in line else line
-                    write_progress(step_num, 6, step_name, detail, overall_pct)
+                    write_progress(step_num, total_steps, step_name, detail, overall_pct)
             except (IndexError, ValueError):
                 pass
         elif "Fetching tickers page" in line:
-            write_progress(step_num, 6, step_name, line, base_pct + 2)
+            write_progress(step_num, total_steps, step_name, line, base_pct + 2)
         elif "Completed in" in line:
-            write_progress(step_num, 6, step_name, "done", step_pct)
+            write_progress(step_num, total_steps, step_name, "done", step_pct)
         elif "Scored" in line:
-            write_progress(step_num, 6, step_name, line.strip(), step_pct - 2)
+            write_progress(step_num, total_steps, step_name, line.strip(), step_pct - 2)
 
     process.wait()
-    write_progress(step_num, 6, step_name, "done", step_pct)
+    write_progress(step_num, total_steps, step_name, "done", step_pct)
 
 
 def run_refresh_with_progress(force=False):
     global refresh_in_progress
+    total_steps = 7
     try:
         # Step 1: Universe
         skip = not force and not is_stale("universe")
-        run_step(1, "Universe", f"{PYTHON} src/data/universe.py --refresh", force=force, skip=skip)
+        run_step(1, "Universe", f"{PYTHON} src/data/universe.py --refresh", total_steps, force=force, skip=skip)
 
         # Step 2: Prices
         if force or is_stale("prices"):
             cmd = f"{PYTHON} src/data/fetch_prices.py --refresh" if os.path.exists(DATA_FILES["prices"]) else f"{PYTHON} src/data/fetch_prices.py"
-            run_step(2, "Prices", cmd, force=force)
+            run_step(2, "Prices", cmd, total_steps, force=force)
         else:
-            run_step(2, "Prices", "", skip=True)
+            run_step(2, "Prices", "", total_steps, skip=True)
 
         # Step 3: News (always refresh)
-        run_step(3, "News", f"{PYTHON} src/data/fetch_news.py")
+        run_step(3, "News", f"{PYTHON} src/data/fetch_news.py", total_steps)
 
         # Step 4: Fundamentals
         skip = not force and not is_stale("fundamentals")
-        run_step(4, "Fundamentals", f"{PYTHON} src/data/fetch_fundamentals.py --refresh", force=force, skip=skip)
+        run_step(4, "Fundamentals", f"{PYTHON} src/data/fetch_fundamentals.py --refresh", total_steps, force=force, skip=skip)
 
         # Step 5: Insider
         skip = not force and not is_stale("insider")
-        run_step(5, "Insider Activity", f"{PYTHON} src/data/fetch_insider.py --refresh", force=force, skip=skip)
+        run_step(5, "Insider Activity", f"{PYTHON} src/data/fetch_insider.py --refresh", total_steps, force=force, skip=skip)
 
         # Step 6: Signals
-        run_step(6, "Running Signals", f"{PYTHON} -m src.signals.runner --save")
+        run_step(6, "Running Signals", f"{PYTHON} -m src.signals.runner --save", total_steps)
 
-        write_progress(6, 6, "Complete", "All done!", 100)
+        # Step 7: Risk Metrics
+        run_step(7, "Risk Metrics", f"{PYTHON} -m src.signals.risk_metrics --save", total_steps)
+
+        write_progress(total_steps, total_steps, "Complete", "All done!", 100)
         time.sleep(1)
     finally:
         refresh_in_progress = False

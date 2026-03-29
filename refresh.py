@@ -25,6 +25,7 @@ DATA_SOURCES = {
     "fundamentals": { "file": "data/fundamentals.parquet",   "max_age_days": 30 },
     "news":         { "file": "data/news_attention.parquet", "max_age_days": 1  },
     "insider":      { "file": "data/insider_activity.parquet","max_age_days": 14 },
+    "benchmark":    { "file": "data/benchmark_iwm.parquet",  "max_age_days": 1  },
 }
 
 def get_file_age_days(filepath):
@@ -55,6 +56,9 @@ def print_status():
     wl_age = get_file_age_days("data/watchlist.parquet")
     if wl_age is not None:
         print(f"{'watchlist':<16} {'data/watchlist.parquet':<35} {wl_age:.1f}d{'':>3} {'—':>6} output")
+    rm_age = get_file_age_days("data/risk_metrics.parquet")
+    if rm_age is not None:
+        print(f"{'risk_metrics':<16} {'data/risk_metrics.parquet':<35} {rm_age:.1f}d{'':>3} {'—':>6} output")
     return any_stale
 
 def run_command(description, command):
@@ -119,6 +123,9 @@ def main():
 
     print("\n--- Running Signals ---")
     run_command("Running all signals", f"{PYTHON} -m src.signals.runner --save")
+
+    print("\n--- Running Risk Metrics ---")
+    run_command("Computing risk metrics", f"{PYTHON} -m src.signals.risk_metrics --save")
 
     total_time = time.time() - start_time
     print(f"\n{'='*60}\n  Refresh complete in {total_time/60:.1f} minutes\n{'='*60}")

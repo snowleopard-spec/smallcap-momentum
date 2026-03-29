@@ -1,0 +1,11 @@
+{
+  "lookback_days": 63,
+  "benchmark_ticker": "IWM",
+  "benchmark_staleness_days": 1,
+  "weights": {
+    "sharpe": 0.34,
+    "ir_universe": 0.33,
+    "ir_russell": 0.33
+  },
+  "notes": "Weights must sum to 1.0. lookback_days=63 is ~3 months of trading days."
+}

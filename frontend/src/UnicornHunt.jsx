@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import axios from "axios";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -8,14 +8,45 @@ const SIGNALS = [
   { key: "volume_surge", name: "Volume Surge", desc: "Recent volume vs 60-day average, normalised by market cap. Measures conviction — is real money flowing in?", source: "Polygon EOD Prices", dataFile: "prices" },
   { key: "price_acceleration", name: "Price Acceleration", desc: "Rate of change of momentum. Catches stocks early in their move before they appear on simple screens.", source: "Polygon EOD Prices", dataFile: "prices" },
   { key: "rsi", name: "RSI Momentum", desc: "14-day Relative Strength Index, tuned for momentum. Sweet spot 60-80 scores highest, overextended >85 gets penalised.", source: "Polygon EOD Prices", dataFile: "prices" },
-  { key: "stochastic", name: "Stochastic", desc: "Slow Stochastic (14,3,3) — where price closed relative to its range. Blends level, crossover, and trend direction.", source: "Polygon EOD Prices", dataFile: "prices" },
+  { key: "stochastic", name: "Stochastic", desc: "Slow Stochastic (14,3,3) combining level (50%), crossover (30%), and trend (20%). Where price closed relative to its range.", source: "Polygon EOD Prices", dataFile: "prices" },
   { key: "financial_health", name: "Financial Health", desc: "Solvency, cash position, profitability, and filing recency from SEC 10-K/10-Q filings. Filters out distressed companies.", source: "SEC EDGAR XBRL", dataFile: "fundamentals" },
   { key: "news_attention", name: "News Attention", desc: "30-day article count and 7-day surge, direction-adjusted. For small caps, any media attention is meaningful.", source: "Polygon News API", dataFile: "news" },
   { key: "insider_activity", name: "Insider Buying", desc: "Form 4 insider purchases vs sales. Asymmetric: buying is strongly bullish, selling only mildly bearish.", source: "SEC EDGAR Form 4", dataFile: "insider" },
 ];
 
+const RISK_SIGNALS = [
+  { key: "sharpe", name: "Sharpe Ratio", desc: "Absolute risk-adjusted return. Mean return / volatility, annualised over rolling window." },
+  { key: "ir_universe", name: "IR (Universe)", desc: "Information ratio vs equal-weighted universe average. Measures outperformance relative to your own stock pool." },
+  { key: "ir_russell", name: "IR (Russell 2000)", desc: "Information ratio vs IWM (Russell 2000 ETF). Measures outperformance relative to the broader small-cap market." },
+];
+
 const fmtCap = v => { if(!v) return "N/A"; if(v>=1e9) return "$"+(v/1e9).toFixed(2)+"B"; return "$"+(v/1e6).toFixed(0)+"M"; };
 const fmtVal = v => { if(!v&&v!==0) return "N/A"; if(v>=1e6) return "$"+(v/1e6).toFixed(1)+"M"; if(v>=1e3) return "$"+(v/1e3).toFixed(0)+"K"; return "$"+v.toFixed(0); };
+const pad=(s,l)=>{s=String(s);return s.length>=l?s.substring(0,l):s+" ".repeat(l-s.length);};
+const pn=(v,l)=>{if(v===null||v===undefined)return pad("N/A",l);return pad(v.toFixed(1),l);};
+const pn2=(v,l)=>{if(v===null||v===undefined)return pad("N/A",l);return pad(v>=0?"+"+v.toFixed(2):v.toFixed(2),l);};
+
+// ── Shared weight rebalance logic ────────────────────────────────────────────
+
+function rebalanceWeights(weights, key, newValue) {
+  const oldValue = weights[key];
+  const diff = newValue - oldValue;
+  const otherKeys = Object.keys(weights).filter(k => k !== key);
+  const otherTotal = otherKeys.reduce((s, k) => s + weights[k], 0);
+  if (!otherTotal) return weights;
+  const nw = { ...weights, [key]: newValue };
+  otherKeys.forEach(k => {
+    nw[k] = Math.max(0, Math.round(weights[k] - diff * (weights[k] / otherTotal)));
+  });
+  const sum = Object.values(nw).reduce((s, v) => s + v, 0);
+  if (sum !== 100) {
+    const largest = otherKeys.reduce((a, b) => nw[a] > nw[b] ? a : b);
+    nw[largest] += 100 - sum;
+  }
+  return nw;
+}
+
+// ── Hero Banner ──────────────────────────────────────────────────────────────
 
 function HeroBanner() {
   return (
@@ -33,6 +64,8 @@ function HeroBanner() {
     </div>
   );
 }
+
+// ── Progress Bar ─────────────────────────────────────────────────────────────
 
 function ProgressBar({ progress, type }) {
   if(!progress) return null;
@@ -52,8 +85,9 @@ function ProgressBar({ progress, type }) {
   );
 }
 
-function ControlPanel({ minCapBn, maxCapBn, universeCount, onRecalc, isLoading, isRecalcing, progress, recalcProgress }) {
-  // Cap fields are read-only — bounds are set in config.json on the server
+// ── Control Panel (cap range + universe count only) ──────────────────────────
+
+function ControlPanel({ minCapBn, maxCapBn, universeCount, isLoading, progress }) {
   const roStyle = { background:"#0e0e1a", border:"1px solid #222244", borderRadius:"8px 0 0 8px", padding:"14px 16px", color:"#666688", fontSize:22, fontFamily:"'Press Start 2P', monospace", boxSizing:"border-box", flex:1, minWidth:0, cursor:"not-allowed" };
   const sfxS = { fontFamily:"'Press Start 2P', monospace", fontSize:18, color:"#555577", padding:"14px 12px 14px 8px", background:"#0e0e1a", border:"1px solid #222244", borderLeft:"none", borderRadius:"0 8px 8px 0", display:"flex", alignItems:"center" };
   const lblS = { fontFamily:"'IBM Plex Mono', monospace", fontSize:12, color:"#8888aa", marginBottom:4, display:"block" };
@@ -76,29 +110,25 @@ function ControlPanel({ minCapBn, maxCapBn, universeCount, onRecalc, isLoading, 
           <span style={sfxS}>B</span>
         </div>
       </div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 0", borderTop:"1px solid #222244", marginBottom:16, fontFamily:"'IBM Plex Mono', monospace", fontSize:13, color:"#8888aa" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 0", borderTop:"1px solid #222244", fontFamily:"'IBM Plex Mono', monospace", fontSize:13, color:"#8888aa" }}>
         <span>Universe size:</span>
         <span style={{ color:"#ffffff", fontWeight:700 }}>{universeCount} stocks</span>
       </div>
-      <div style={{ display:"flex", gap:8 }}>
-        <button onClick={onRecalc} disabled={isLoading||isRecalcing} style={{ flex:1, padding:"14px 0", borderRadius:8, border:"none", cursor:"pointer", background:"linear-gradient(135deg, #00aa55, #00cc66)", color:"#fff", fontFamily:"'IBM Plex Mono', monospace", fontSize:13, fontWeight:700, opacity:(isLoading||isRecalcing)?0.5:1 }}>
-          {isRecalcing?"Calculating...":"⚡ Recalc"}
-        </button>
-      </div>
       {isLoading && progress && <ProgressBar progress={progress} type="refresh" />}
-      {isRecalcing && recalcProgress && <ProgressBar progress={recalcProgress} type="recalc" />}
     </div>
   );
 }
+
+// ── Signal Cards ─────────────────────────────────────────────────────────────
 
 function SignalCard({ signal, weight, onWeightChange, status }) {
   const isStale=status?.stale??false; const age=status?.age??0;
   const ageStr=age===null?"missing":age<1?Math.round(age*24)+"h ago":age.toFixed(1)+"d ago";
   return (
-    <div style={{ background:"#12121e", borderRadius:12, border:"1px solid #222244", padding:"16px 20px", marginBottom:8 }}>
+    <div style={{ background:"#12121e", borderRadius:12, border:"1px solid #2e2218", padding:"16px 20px", marginBottom:8 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <div style={{ width:10, height:10, borderRadius:"50%", background:isStale?"#ffcc00":"#00cc66", boxShadow:isStale?"0 0 8px #ffcc0088":"0 0 8px #00cc6688" }} />
+          <div style={{ width:10, height:10, borderRadius:"50%", background:isStale?"#ffcc00":"#ff6a00", boxShadow:isStale?"0 0 8px #ffcc0088":"0 0 8px #ff6a0088" }} />
           <span style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#ffffff", fontWeight:700 }}>{signal.name}</span>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
@@ -108,7 +138,7 @@ function SignalCard({ signal, weight, onWeightChange, status }) {
       </div>
       <div style={{ position:"relative", height:24, marginBottom:8 }}>
         <div style={{ position:"absolute", top:10, left:0, right:0, height:4, background:"#222244", borderRadius:2 }}>
-          <div style={{ height:"100%", width:weight+"%", borderRadius:2, background:"linear-gradient(90deg, #4444ff, #6666ff)" }} />
+          <div style={{ height:"100%", width:(weight*2)+"%", borderRadius:2, background:"linear-gradient(90deg, #cc4400, #ff6a00)" }} />
         </div>
         <input type="range" min={0} max={50} value={weight} onChange={e=>onWeightChange(Number(e.target.value))} style={{ position:"absolute", top:0, left:0, width:"100%", height:24, opacity:0, cursor:"pointer" }} />
       </div>
@@ -118,22 +148,48 @@ function SignalCard({ signal, weight, onWeightChange, status }) {
   );
 }
 
-function WeightsPanel({ weights, setWeights, statuses }) {
-  const handleWeightChange = (key, nv) => {
-    const ov=weights[key], diff=nv-ov, ok=Object.keys(weights).filter(k=>k!==key), ot=ok.reduce((s,k)=>s+weights[k],0);
-    if(!ot) return; const nw={...weights,[key]:nv};
-    ok.forEach(k=>{nw[k]=Math.max(0,Math.round(weights[k]-diff*(weights[k]/ot)));});
-    const sum=Object.values(nw).reduce((s,v)=>s+v,0);
-    if(sum!==100){const lg=ok.reduce((a,b)=>nw[a]>nw[b]?a:b);nw[lg]+=100-sum;}
-    setWeights(nw);
-  };
+function RiskSignalCard({ signal, weight, onWeightChange }) {
   return (
-    <div style={{ maxWidth:480, margin:"20px auto", padding:"0 20px" }}>
-      <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:12, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Signal Weights</h2>
-      {SIGNALS.map(sig=><SignalCard key={sig.key} signal={sig} weight={weights[sig.key]||0} onWeightChange={v=>handleWeightChange(sig.key,v)} status={statuses[sig.dataFile]} />)}
+    <div style={{ background:"#12121e", borderRadius:12, border:"1px solid #1a2e2e", padding:"16px 20px", marginBottom:8 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:10, height:10, borderRadius:"50%", background:"#00e5ff", boxShadow:"0 0 8px #00e5ff88" }} />
+          <span style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#ffffff", fontWeight:700 }}>{signal.name}</span>
+        </div>
+        <span style={{ fontFamily:"'Press Start 2P', monospace", fontSize:12, color:"#00e5ff", minWidth:40, textAlign:"right" }}>{weight}%</span>
+      </div>
+      <div style={{ position:"relative", height:24, marginBottom:8 }}>
+        <div style={{ position:"absolute", top:10, left:0, right:0, height:4, background:"#222244", borderRadius:2 }}>
+          <div style={{ height:"100%", width:weight+"%", borderRadius:2, background:"linear-gradient(90deg, #0088aa, #00e5ff)" }} />
+        </div>
+        <input type="range" min={0} max={100} value={weight} onChange={e=>onWeightChange(Number(e.target.value))} style={{ position:"absolute", top:0, left:0, width:"100%", height:24, opacity:0, cursor:"pointer" }} />
+      </div>
+      <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#888888", margin:0, lineHeight:1.5 }}>{signal.desc}</p>
     </div>
   );
 }
+
+// ── Quant Signals Section ────────────────────────────────────────────────────
+
+function QuantSignalsSection({ weights, setWeights, statuses, onRecalc, isRecalcing, recalcProgress }) {
+  const handleWeightChange = (key, nv) => setWeights(rebalanceWeights(weights, key, nv));
+  return (
+    <div style={{ maxWidth:480, margin:"48px auto 20px", padding:"0 20px" }}>
+      <div style={{ textAlign:"center", marginBottom:20 }}>
+        <div style={{ width:60, height:2, background:"linear-gradient(90deg, transparent, #ff6a00, transparent)", margin:"0 auto 20px" }} />
+        <h2 style={{ fontFamily:"'Press Start 2P', monospace", fontSize:14, color:"#ff6a00", textShadow:"0 0 20px rgba(255,106,0,0.4)", letterSpacing:3, marginBottom:6 }}>QUANT SIGNALS</h2>
+        <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", letterSpacing:1 }}>8 weighted momentum & quality signals — composite scoring</p>
+      </div>
+      {SIGNALS.map(sig=><SignalCard key={sig.key} signal={sig} weight={weights[sig.key]||0} onWeightChange={v=>handleWeightChange(sig.key,v)} status={statuses[sig.dataFile]} />)}
+      <button onClick={onRecalc} disabled={isRecalcing} style={{ width:"100%", marginTop:12, padding:"14px 0", borderRadius:8, border:"none", cursor:"pointer", background:"linear-gradient(135deg, #cc4400, #ff6a00)", color:"#fff", fontFamily:"'IBM Plex Mono', monospace", fontSize:13, fontWeight:700, opacity:isRecalcing?0.5:1 }}>
+        {isRecalcing ? "Calculating..." : "⚡ Recalc Momentum Rankings"}
+      </button>
+      {isRecalcing && recalcProgress && <ProgressBar progress={recalcProgress} type="recalc" />}
+    </div>
+  );
+}
+
+// ── Detail Panel (expandable row) ────────────────────────────────────────────
 
 function DetailPanel({ row }) {
   const mp=row.net_margin!=null?(row.net_margin*100).toFixed(1)+"%":"N/A", cr=row.current_ratio!=null?row.current_ratio.toFixed(1):"N/A", de=row.debt_to_equity!=null?row.debt_to_equity.toFixed(1):"N/A";
@@ -155,17 +211,17 @@ function DetailPanel({ row }) {
   );
 }
 
+// ── Momentum DOS Terminal ────────────────────────────────────────────────────
+
 function DOSTerminal({ watchlist }) {
   const [xr, setXr] = useState(null);
   const t20 = watchlist.slice(0,20);
-  const pad=(s,l)=>{s=String(s);return s.length>=l?s.substring(0,l):s+" ".repeat(l-s.length);};
-  const pn=(v,l)=>{if(v===null||v===undefined)return pad("N/A",l);return pad(v.toFixed(1),l);};
   const exportCSV=()=>{const h="Rank,Ticker,Sector,Composite,Momentum,Volume,Accel,RSI,Stoch,Health,News,Insider,Name,Market Cap,Price,Change 7d";const rows=watchlist.map(r=>r.rank+","+r.ticker+","+r.sector+","+r.composite+","+(r.price_momentum??"")+","+(r.volume_surge??"")+","+(r.price_acceleration??"")+","+(r.rsi??"")+","+(r.stochastic??"")+","+(r.financial_health??"")+","+(r.news_attention??"")+","+(r.insider_activity??"")+","+r.name+","+r.market_cap+","+r.price+","+r.change_7d);const blob=new Blob([[h,...rows].join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="unicorn_hunt_watchlist.csv";a.click();};
   const hl="RANK TCKR SEC  COMP  MOMNT VOLUM ACCEL  RSI  STOCH HLTH  NEWS  INSDR NAME";
   const dv="═".repeat(hl.length);
   return (
     <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px" }}>
-      <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:4, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Watchlist Output</h2>
+      <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:4, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Momentum Watchlist</h2>
       <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", textAlign:"center", marginBottom:12 }}>Click any row to expand details</p>
       <div style={{ background:"#0a0a0a", border:"2px solid #333333", borderRadius:4, overflow:"hidden" }}>
         <div style={{ background:"#0000aa", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#ffffff", textAlign:"center" }}>UNICORN HUNT v1.0 — Top 20</div>
@@ -194,45 +250,123 @@ function DOSTerminal({ watchlist }) {
   );
 }
 
-function PriceChart({ ticker, data, rank }) {
-  const ref=useRef(null);
-  useEffect(()=>{const c=ref.current;if(!c||!data||!data.length)return;const ctx=c.getContext("2d");const w=c.width=c.offsetWidth*2;const h=c.height=c.offsetHeight*2;ctx.scale(2,2);const cw=w/2,ch=h/2;const prices=data.map(d=>d.close);const mn=Math.min(...prices)*0.95,mx=Math.max(...prices)*1.05;const latest=prices[prices.length-1],first=prices[0],change=((latest-first)/first*100).toFixed(1),isUp=latest>=first;ctx.fillStyle="#0a0a14";ctx.fillRect(0,0,cw,ch);ctx.strokeStyle="#ffffff08";ctx.lineWidth=0.5;for(let i=0;i<5;i++){const y=(ch-40)*i/4+20;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(cw,y);ctx.stroke();}ctx.beginPath();ctx.strokeStyle=isUp?"#00cc66":"#ff4444";ctx.lineWidth=1.5;prices.forEach((p,i)=>{const x=(i/(prices.length-1))*cw;const y=ch-30-((p-mn)/(mx-mn))*(ch-50);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();ctx.lineTo(cw,ch-30);ctx.lineTo(0,ch-30);ctx.closePath();const grad=ctx.createLinearGradient(0,0,0,ch);grad.addColorStop(0,isUp?"#00cc6633":"#ff444433");grad.addColorStop(1,"#00000000");ctx.fillStyle=grad;ctx.fill();ctx.fillStyle="#ffffff";ctx.font="bold 13px 'IBM Plex Mono', monospace";ctx.fillText(ticker,8,16);ctx.fillStyle=isUp?"#00cc66":"#ff4444";ctx.font="11px 'IBM Plex Mono', monospace";ctx.fillText("$"+latest.toFixed(2)+"  "+(isUp?"↑":"↓")+change+"%",8,32);ctx.fillStyle="#ff6a00";ctx.font="bold 10px 'Press Start 2P', monospace";ctx.textAlign="right";ctx.fillText("#"+rank,cw-8,16);ctx.textAlign="left";},[ticker,data,rank]);
-  return <canvas ref={ref} style={{ width:"100%", height:180, borderRadius:8, border:"1px solid #222244", background:"#0a0a14" }} />;
-}
+// ── Risk Metrics Section ─────────────────────────────────────────────────────
 
-function ChartsGrid({ watchlist }) {
-  const [pd2, setPd2]=useState({});const t10=watchlist.slice(0,10);
-  useEffect(()=>{if(!t10.length)return;(async()=>{const d={};for(const s of t10){try{const r=await axios.get(API_BASE+"/api/prices/"+s.ticker);d[s.ticker]=r.data.data;}catch(e){}}setPd2(d);})();},[watchlist]);
+function RiskMetricsSection({ weights, setWeights, lookbackDays, onRecalc, isRecalcing }) {
+  const handleWeightChange = (key, nv) => setWeights(rebalanceWeights(weights, key, nv));
   return (
-    <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px 60px" }}>
-      <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:16, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Top 10 Price Charts</h2>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:12 }}>{t10.slice(0,9).map(s=><PriceChart key={s.ticker} ticker={s.ticker} data={pd2[s.ticker]||[]} rank={s.rank}/>)}</div>
-      {t10.length>=10&&<div style={{ marginTop:12, maxWidth:"33.33%", marginLeft:"auto", marginRight:"auto" }}><PriceChart ticker={t10[9].ticker} data={pd2[t10[9].ticker]||[]} rank={t10[9].rank}/></div>}
+    <div style={{ maxWidth:480, margin:"48px auto 20px", padding:"0 20px" }}>
+      <div style={{ textAlign:"center", marginBottom:20 }}>
+        <div style={{ width:60, height:2, background:"linear-gradient(90deg, transparent, #00e5ff, transparent)", margin:"0 auto 20px" }} />
+        <h2 style={{ fontFamily:"'Press Start 2P', monospace", fontSize:14, color:"#00e5ff", textShadow:"0 0 20px rgba(0,229,255,0.4)", letterSpacing:3, marginBottom:6 }}>RISK METRICS</h2>
+        <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", letterSpacing:1 }}>Sharpe & Information Ratios — {lookbackDays} day lookback</p>
+      </div>
+      {RISK_SIGNALS.map(sig=><RiskSignalCard key={sig.key} signal={sig} weight={weights[sig.key]||0} onWeightChange={v=>handleWeightChange(sig.key,v)} />)}
+      <button onClick={onRecalc} disabled={isRecalcing} style={{ width:"100%", marginTop:12, padding:"14px 0", borderRadius:8, border:"none", cursor:"pointer", background:"linear-gradient(135deg, #0088aa, #00ccee)", color:"#fff", fontFamily:"'IBM Plex Mono', monospace", fontSize:13, fontWeight:700, opacity:isRecalcing?0.5:1 }}>
+        {isRecalcing ? "Calculating..." : "⚡ Recalc Risk Rankings"}
+      </button>
     </div>
   );
 }
 
+// ── Risk Metrics DOS Terminal ────────────────────────────────────────────────
+
+function RiskMetricsTerminal({ data, momentumTickers }) {
+  const [xr, setXr] = useState(null);
+  const t10 = data.slice(0,10);
+  const hl="RANK TCKR SEC  COMP   SHARPE  IR-UNI IR-RUSS  PRICE    7D    MCAP     NAME";
+  const dv="═".repeat(hl.length);
+
+  return (
+    <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px 60px" }}>
+      <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:4, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Risk-Adjusted Rankings</h2>
+      <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", textAlign:"center", marginBottom:12 }}>Independent ranking of entire universe by blended Sharpe & IR</p>
+      <div style={{ background:"#0a0a0a", border:"2px solid #1a4444", borderRadius:4, overflow:"hidden" }}>
+        <div style={{ background:"#004444", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#00ffff", textAlign:"center" }}>RISK METRICS v1.0 — Top 10 by Risk-Adjusted Return</div>
+        <div style={{ padding:"12px 16px", overflowX:"auto", fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:12, lineHeight:1.8 }}>
+          <pre style={{ margin:0, color:"#00e5ff" }}>
+            <span style={{ color:"#00ffcc" }}>C:\RISK&gt;</span>{" run_metrics.exe\n\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}
+            {t10.map(row=>{
+              const chg = row.change_7d;
+              const chgStr = chg!=null ? (chg>=0?"+"+chg.toFixed(1)+"%":chg.toFixed(1)+"%") : "N/A";
+              const chgColor = chg!=null ? (chg>=0?"#00cc66":"#ff4444") : "#668888";
+              const inMomentum = momentumTickers.has(row.ticker);
+              return (
+                <span key={row.rank}>
+                  <span onClick={()=>setXr(xr===row.rank?null:row.rank)} style={{ cursor:"pointer" }}>
+                    <span style={{ color:"#00e5ff" }}>{pad(row.rank,5)}</span>
+                    <span style={{ color:"#ffffff" }}>{pad(row.ticker,5)}</span>
+                    <span style={{ color:"#668888" }}>{pad(row.sector||"—",5)}</span>
+                    <span style={{ color:"#00ffcc", fontWeight:"bold" }}>{pn(row.composite,7)}</span>
+                    <span style={{ color:"#00e5ff" }}>{pn2(row.sharpe,8)}{pn2(row.ir_universe,7)}{pn2(row.ir_russell,8)}</span>
+                    <span style={{ color:"#aaaacc" }}>{pad(row.price!=null?"$"+row.price.toFixed(2):"N/A",9)}</span>
+                    <span style={{ color:chgColor }}>{pad(chgStr,6)}</span>
+                    <span style={{ color:"#668888" }}>{pad(fmtCap(row.market_cap),9)}</span>
+                    <span style={{ color:"#668888" }}>{pad(row.name||"",20)}</span>
+                    {inMomentum && <span style={{ color:"#ff6a00" }}> ★</span>}
+                  </span>{"\n"}
+                  {xr===row.rank && (
+                    <span>
+                      <span style={{ color:"#1a5555" }}>{"  ├─ "}</span>
+                      <span style={{ color:"#668888" }}>Sharpe pctile: </span><span style={{ color:"#00e5ff" }}>{row.sharpe_pctile!=null?row.sharpe_pctile.toFixed(0)+"th":"N/A"}</span>
+                      <span style={{ color:"#1a5555" }}>{" │ "}</span>
+                      <span style={{ color:"#668888" }}>IR-Uni pctile: </span><span style={{ color:"#00e5ff" }}>{row.ir_universe_pctile!=null?row.ir_universe_pctile.toFixed(0)+"th":"N/A"}</span>
+                      <span style={{ color:"#1a5555" }}>{" │ "}</span>
+                      <span style={{ color:"#668888" }}>IR-Russ pctile: </span><span style={{ color:"#00e5ff" }}>{row.ir_russell_pctile!=null?row.ir_russell_pctile.toFixed(0)+"th":"N/A"}</span>
+                      {"\n"}
+                    </span>
+                  )}
+                </span>
+              );
+            })}
+            <span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}
+            <span style={{ color:"#668888" }}>{"  ★ = also in momentum top 20"}</span>{"\n\n"}
+            <span style={{ color:"#00ffcc" }}>C:\RISK&gt;</span><span style={{ animation:"blink 1s infinite", color:"#00e5ff" }}>_</span>
+          </pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ─────────────────────────────────────────────────────────────────
+
 export default function UnicornHunt() {
-  // Cap bounds and weights are loaded from /api/config on mount
+  // Config state
   const [minCapBn, setMinCapBn] = useState("0.5");
   const [maxCapBn, setMaxCapBn] = useState("2.0");
+  const [configLoaded, setConfigLoaded] = useState(false);
+
+  // Momentum state
   const [weights, setWeights] = useState({
     price_momentum:20, volume_surge:20, price_acceleration:10,
     rsi:0, stochastic:10, financial_health:15, news_attention:5, insider_activity:20
   });
-  const [configLoaded, setConfigLoaded] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRecalcing, setIsRecalcing] = useState(false);
-  const [statuses, setStatuses] = useState({});
   const [watchlist, setWatchlist] = useState([]);
-  const [universeCount, setUniverseCount] = useState(0);
-  const [progress, setProgress] = useState(null);
+  const [isRecalcing, setIsRecalcing] = useState(false);
   const [recalcProgress, setRecalcProgress] = useState(null);
+
+  // Risk metrics state
+  const [riskWeights, setRiskWeights] = useState({ sharpe:34, ir_universe:33, ir_russell:33 });
+  const [riskMetrics, setRiskMetrics] = useState([]);
+  const [riskLookback, setRiskLookback] = useState(63);
+  const [isRiskRecalcing, setIsRiskRecalcing] = useState(false);
+
+  // Shared state
+  const [statuses, setStatuses] = useState({});
+  const [universeCount, setUniverseCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [progress, setProgress] = useState(null);
+
+  // Momentum top-20 tickers for ★ overlap indicator
+  const momentumTickers = new Set(watchlist.slice(0, 20).map(w => w.ticker));
 
   useEffect(() => {
     loadConfig();
+    loadRiskConfig();
     loadStatus();
     loadWatchlist();
+    loadRiskMetrics();
   }, []);
 
   const loadConfig = async () => {
@@ -246,6 +380,17 @@ export default function UnicornHunt() {
     } catch(e) {
       console.warn("Could not load config from API, using defaults");
       setConfigLoaded(true);
+    }
+  };
+
+  const loadRiskConfig = async () => {
+    try {
+      const r = await axios.get(API_BASE + "/api/risk-metrics-config");
+      const cfg = r.data;
+      setRiskWeights(cfg.weights);
+      setRiskLookback(cfg.lookback_days);
+    } catch(e) {
+      console.warn("Could not load risk metrics config, using defaults");
     }
   };
 
@@ -264,21 +409,17 @@ export default function UnicornHunt() {
     } catch(e) {}
   };
 
-  const pollProgress = () => {
-    const poll = setInterval(async () => {
-      try {
-        const r = await axios.get(API_BASE + "/api/progress");
-        setProgress(r.data);
-        if (!r.data.in_progress) {
-          clearInterval(poll);
-          setProgress(null);
-          setIsLoading(false);
-          loadStatus();
-          loadWatchlist();
-        }
-      } catch(e) {}
-    }, 1500);
+  const loadRiskMetrics = async () => {
+    try {
+      const r = await axios.get(API_BASE + "/api/risk-metrics");
+      setRiskMetrics(r.data.data || []);
+      if (r.data.config) {
+        setRiskLookback(r.data.config.lookback_days || 63);
+      }
+    } catch(e) {}
   };
+
+  // ── Momentum Recalc ─────────────────────────────────────────────────────────
 
   const handleRecalc = async () => {
     setIsRecalcing(true);
@@ -300,6 +441,21 @@ export default function UnicornHunt() {
     setIsRecalcing(false);
   };
 
+  // ── Risk Metrics Recalc ─────────────────────────────────────────────────────
+
+  const handleRiskRecalc = async () => {
+    setIsRiskRecalcing(true);
+    try {
+      const aw = {};
+      for (const [k, v] of Object.entries(riskWeights)) aw[k] = v / 100;
+      const r = await axios.post(API_BASE + "/api/recalc-risk", { weights: aw });
+      setRiskMetrics(r.data.data || []);
+    } catch(e) {
+      console.error("Risk recalc failed:", e);
+    }
+    setIsRiskRecalcing(false);
+  };
+
   if (!configLoaded) return (
     <div style={{ minHeight:"100vh", background:"#08080f", display:"flex", alignItems:"center", justifyContent:"center" }}>
       <p style={{ fontFamily:"'IBM Plex Mono', monospace", color:"#555577" }}>Loading...</p>
@@ -310,23 +466,47 @@ export default function UnicornHunt() {
     <div style={{ minHeight:"100vh", width:"100%", background:"linear-gradient(180deg, #08080f 0%, #0c0c18 50%, #08080f 100%)", color:"#ffffff" }}>
       <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
       <style>{"@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}*{box-sizing:border-box}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#6666ff;cursor:pointer}::selection{background:#ff6a0044}::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:#0a0a14}::-webkit-scrollbar-thumb{background:#333355;border-radius:3px}"}</style>
+
       <HeroBanner />
+
       <ControlPanel
         minCapBn={minCapBn}
         maxCapBn={maxCapBn}
         universeCount={universeCount}
-        onRecalc={handleRecalc}
         isLoading={isLoading}
-        isRecalcing={isRecalcing}
         progress={progress}
+      />
+
+      {/* ── QUANT SIGNALS — orange theme ── */}
+      <QuantSignalsSection
+        weights={weights}
+        setWeights={setWeights}
+        statuses={statuses}
+        onRecalc={handleRecalc}
+        isRecalcing={isRecalcing}
         recalcProgress={recalcProgress}
       />
-      <WeightsPanel weights={weights} setWeights={setWeights} statuses={statuses} />
+
       <DOSTerminal watchlist={watchlist} />
-      <ChartsGrid watchlist={watchlist} />
+
+      {/* ── Divider ── */}
+      <div style={{ maxWidth:960, margin:"20px auto", padding:"0 20px" }}>
+        <div style={{ height:1, background:"linear-gradient(90deg, transparent, #00e5ff33, #00e5ff, #00e5ff33, transparent)" }} />
+      </div>
+
+      {/* ── RISK METRICS — cyan theme ── */}
+      <RiskMetricsSection
+        weights={riskWeights}
+        setWeights={setRiskWeights}
+        lookbackDays={riskLookback}
+        onRecalc={handleRiskRecalc}
+        isRecalcing={isRiskRecalcing}
+      />
+
+      <RiskMetricsTerminal
+        data={riskMetrics}
+        momentumTickers={momentumTickers}
+      />
     </div>
   );
 }
-
-
-

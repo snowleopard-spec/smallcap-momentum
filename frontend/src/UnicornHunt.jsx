@@ -286,7 +286,7 @@ function RiskMetricsTerminal({ data, momentumTickers }) {
         <div style={{ padding:"12px 16px", overflowX:"auto", fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:12, lineHeight:1.8 }}>
           <pre style={{ margin:0, color:"#00e5ff" }}>
             <span style={{ color:"#00ffcc" }}>C:\RISK&gt;</span>{" run_metrics.exe\n\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}
-            {t10.map(row=>{
+            {t20.map(row=>{
               const chg = row.change_7d;
               const chgStr = chg!=null ? (chg>=0?"+"+chg.toFixed(1)+"%":chg.toFixed(1)+"%") : "N/A";
               const chgColor = chg!=null ? (chg>=0?"#00cc66":"#ff4444") : "#668888";

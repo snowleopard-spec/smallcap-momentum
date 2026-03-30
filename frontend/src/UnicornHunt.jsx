@@ -273,7 +273,7 @@ function RiskMetricsSection({ weights, setWeights, lookbackDays, onRecalc, isRec
 
 function RiskMetricsTerminal({ data, momentumTickers }) {
   const [xr, setXr] = useState(null);
-  const t10 = data.slice(0,10);
+  const t20 = data.slice(0,20);
   const hl="RANK TCKR SEC  COMP   SHARPE  IR-UNI IR-RUSS  PRICE    7D    MCAP     NAME";
   const dv="═".repeat(hl.length);
 
@@ -282,7 +282,7 @@ function RiskMetricsTerminal({ data, momentumTickers }) {
       <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:4, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Risk-Adjusted Rankings</h2>
       <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", textAlign:"center", marginBottom:12 }}>Independent ranking of entire universe by blended Sharpe & IR</p>
       <div style={{ background:"#0a0a0a", border:"2px solid #1a4444", borderRadius:4, overflow:"hidden" }}>
-        <div style={{ background:"#004444", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#00ffff", textAlign:"center" }}>RISK METRICS v1.0 — Top 10 by Risk-Adjusted Return</div>
+        <div style={{ background:"#004444", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#00ffff", textAlign:"center" }}>RISK METRICS v1.0 — Top 20 by Risk-Adjusted Return</div>
         <div style={{ padding:"12px 16px", overflowX:"auto", fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:12, lineHeight:1.8 }}>
           <pre style={{ margin:0, color:"#00e5ff" }}>
             <span style={{ color:"#00ffcc" }}>C:\RISK&gt;</span>{" run_metrics.exe\n\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}

@@ -161,7 +161,7 @@ def compute_daily_returns(prices_df, tickers=None):
     pivot = pivot.sort_index()
 
     # Daily returns
-    returns = pivot.pct_change().dropna(how="all")
+    returns = pivot.pct_change(fill_method=None).dropna(how="all")
 
     return returns
 

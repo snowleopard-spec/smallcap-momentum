@@ -2,7 +2,7 @@
 
 **Live at [unicornpunk.org](https://unicornpunk.org)**
 
-A quantitative small-cap stock screener that combines eight momentum and quality signals to surface US equities in the $500M–$2B market cap range showing unusual strength. The system fetches data from multiple sources (Polygon, SEC EDGAR), scores every ticker on a 0–100 percentile scale across each signal, and produces a ranked watchlist updated daily by cron.
+A quantitative small-cap stock screener that combines eight momentum and quality signals to surface US equities in the $500M–$2.5B market cap range showing unusual strength. The system fetches data from multiple sources (Polygon, SEC EDGAR), scores every ticker on a 0–100 percentile scale across each signal, and produces a ranked watchlist updated daily by cron. A separate risk metrics engine computes Sharpe ratios and Information Ratios for every ticker, providing an independent risk-adjusted view of the universe.
 
 ---
 
@@ -11,6 +11,7 @@ A quantitative small-cap stock screener that combines eight momentum and quality
 - [Architecture Overview](#architecture-overview)
 - [Data Pipeline](#data-pipeline)
 - [Signal Engine](#signal-engine)
+- [Risk Metrics Engine](#risk-metrics-engine)
 - [Backend API](#backend-api)
 - [Frontend](#frontend)
 - [Server & Deployment](#server--deployment)
@@ -33,18 +34,20 @@ A quantitative small-cap stock screener that combines eight momentum and quality
 │  Polygon.io API ─────┼────▶│  refresh.py       │     │  React + Vite          │
 │  SEC EDGAR XBRL ─────┼────▶│  src/data/*.py    │     │  UnicornHunt.jsx       │
 │  SEC EDGAR Form 4 ───┼────▶│  src/signals/*.py │     │  Hosted on Cloudflare  │
-│                      │     │  api.py (FastAPI) │◀───▶│  Pages                 │
+│                      │     │  risk_metrics.py  │     │  Pages                 │
+│                      │     │  api.py (FastAPI) │◀───▶│                        │
 └─────────────────────┘     │                   │     └───────────────────────┘
                              │  Cron (9pm UTC)   │
                              │  refresh_monitor  │──▶  Email via Resend
                              └──────────────────┘
 ```
 
-The system has three layers:
+The system has four layers:
 
 1. **Data pipeline** — Python scripts that fetch, cache, and combine data from external APIs into Parquet files.
 2. **Signal engine** — Eight signal classes that each score every ticker, plus a runner that produces a weighted composite and ranked watchlist.
-3. **API + Frontend** — A FastAPI backend serving the watchlist and supporting live weight recalculation, consumed by a React single-page app with a retro DOS-terminal aesthetic.
+3. **Risk metrics engine** — Computes Sharpe ratio and two Information Ratios (vs universe and vs Russell 2000) for every ticker, producing an independent risk-adjusted ranking.
+4. **API + Frontend** — A FastAPI backend serving both the momentum watchlist and risk metrics, with live weight recalculation for both. Consumed by a React single-page app with a retro DOS-terminal aesthetic.
 
 ---
 
@@ -54,7 +57,7 @@ Each data source has its own fetch script in `src/data/`. They all write Parquet
 
 ### Universe (`src/data/universe.py`)
 
-Builds the investable universe by fetching all active US common stocks (type "CS") from Polygon, then filtering to the market cap range defined in `config.json` (default $500M–$2B). It stores both the full market cap snapshot (`data/all_market_caps.parquet`) and the filtered universe (`data/universe.parquet`). Market caps are always re-fetched fresh — no stale cache reuse — so the bounds are applied against current values.
+Builds the investable universe by fetching all active US common stocks (type "CS") from Polygon, then filtering to the market cap range defined in `config.json` (default $500M–$2.5B). It stores both the full market cap snapshot (`data/all_market_caps.parquet`) and the filtered universe (`data/universe.parquet`). Market caps are always re-fetched fresh — no stale cache reuse — so the bounds are applied against current values.
 
 - **Source:** Polygon `/v3/reference/tickers` + `/v3/reference/tickers/{symbol}`
 - **Refresh cadence:** Weekly (7 days)
@@ -66,7 +69,7 @@ Fetches 5 years of daily OHLCV data for every ticker in the universe. Individual
 
 - **Source:** Polygon `/v2/aggs/ticker/{symbol}/range/1/day`
 - **Refresh cadence:** Daily (1 day)
-- **Output:** ~1.5M rows in the combined file covering ~1,600 tickers × 5 years
+- **Output:** ~2M rows in the combined file covering ~2,000+ tickers × 5 years
 
 ### Fundamentals (`src/data/fetch_fundamentals.py`)
 
@@ -93,6 +96,14 @@ Pulls Form 4 insider transaction data from SEC EDGAR. For each ticker, it first 
 - **Refresh cadence:** Fortnightly (14 days)
 - **Lookback:** 90 days of filings
 - **Rate limit:** Same SEC 10/sec policy
+
+### Benchmark (`src/signals/risk_metrics.py`)
+
+Fetches daily OHLCV data for IWM (iShares Russell 2000 ETF) from Polygon as an external benchmark for the Information Ratio calculation. Stored in its own Parquet file, completely separate from the main price pipeline.
+
+- **Source:** Polygon `/v2/aggs/ticker/IWM/range/1/day`
+- **Refresh cadence:** Daily (1 day)
+- **Output:** `data/benchmark_iwm.parquet`
 
 ---
 
@@ -125,6 +136,64 @@ Run standalone: `python -m src.signals.runner --save`
 
 ---
 
+## Risk Metrics Engine
+
+The risk metrics engine (`src/signals/risk_metrics.py`) provides an independent risk-adjusted view of the universe, separate from the momentum signal scoring. It computes three metrics for every ticker and blends them into a composite ranking.
+
+### Metrics
+
+| Metric | Default Weight | What it measures |
+|--------|---------------|-----------------|
+| **Sharpe Ratio** | 34% | Absolute risk-adjusted return. Mean daily return divided by daily return volatility, annualised (×√252). Higher = better return per unit of risk. |
+| **IR (Universe)** | 33% | Information Ratio vs the equal-weighted universe average. Each day, benchmark return = mean return across all tickers. Measures how consistently a stock outperforms the other stocks in your filtered universe. |
+| **IR (Russell 2000)** | 33% | Information Ratio vs IWM (Russell 2000 ETF). Measures how consistently a stock outperforms the broader small-cap market. Uses separately fetched benchmark data (`data/benchmark_iwm.parquet`). |
+
+### How it works
+
+1. Loads `prices_combined.parquet` and computes a daily returns matrix (dates × tickers).
+2. Fetches IWM benchmark data from Polygon (or uses cached copy if fresh).
+3. For each ticker, computes the three metrics over a configurable lookback window (default 63 trading days, ~3 months).
+4. Converts each metric to a percentile rank (0–100) within the universe.
+5. Blends percentile ranks using configurable weights from `risk_metrics_config.json`.
+6. Outputs `data/risk_metrics.parquet` with raw values, percentiles, composite score, and rank.
+
+### Why two Information Ratios?
+
+The universe-based IR and the Russell-based IR answer different questions and produce meaningfully different rankings:
+
+- **IR (Universe)** measures outperformance against your own stock pool. The benchmark is the equal-weighted average return of ~1,000 stocks in the $500M–$2.5B range.
+- **IR (Russell 2000)** measures outperformance against the broader small-cap market (IWM), which includes stocks well below $500M and has different sector weightings.
+
+A stock ranking high on both IRs is outperforming regardless of benchmark choice — a robust signal. A stock ranking high on one but not the other tells you its edge is specific to either your universe's composition or the broader market.
+
+### Configuration (`risk_metrics_config.json`)
+
+```json
+{
+  "lookback_days": 63,
+  "benchmark_ticker": "IWM",
+  "benchmark_staleness_days": 1,
+  "weights": {
+    "sharpe": 0.34,
+    "ir_universe": 0.33,
+    "ir_russell": 0.33
+  }
+}
+```
+
+- **lookback_days** — rolling window in trading days (63 ≈ 3 months).
+- **benchmark_ticker** — ETF ticker for the external benchmark.
+- **weights** — must sum to 1.0. Adjust to emphasise absolute returns (Sharpe) vs relative performance (IRs).
+
+### Running standalone
+
+```bash
+python -m src.signals.risk_metrics --save          # compute and save
+python -m src.signals.risk_metrics --save --refresh # force re-fetch IWM
+```
+
+---
+
 ## Backend API
 
 **File:** `api.py`  
@@ -137,14 +206,28 @@ Run standalone: `python -m src.signals.runner --save`
 |--------|------|-------------|
 | `GET` | `/api/status` | Data freshness for each source (age, staleness, universe count) |
 | `GET` | `/api/config` | Universe bounds and signal weights from `config.json` |
+| `GET` | `/api/risk-metrics-config` | Risk metrics weights and lookback from `risk_metrics_config.json` |
 | `GET` | `/api/watchlist` | Full ranked watchlist with all scores, fundamentals, insider data, and price info |
+| `GET` | `/api/risk-metrics` | Ranked risk-adjusted metrics with Sharpe, IR-Universe, IR-Russell, price info |
 | `GET` | `/api/prices/{ticker}` | Daily close prices for a single ticker (default 365 days) |
-| `POST` | `/api/recalc` | Re-rank watchlist with custom weights (body: `{"weights": {...}}`) — instant, no refetch |
+| `POST` | `/api/recalc` | Re-rank watchlist with custom signal weights (body: `{"weights": {...}}`) — instant, no refetch |
+| `POST` | `/api/recalc-risk` | Re-rank risk metrics with custom metric weights (body: `{"weights": {...}}`) — instant, no refetch |
 | `POST` | `/api/refresh` | Trigger a background smart refresh (skips fresh data) |
 | `POST` | `/api/reset` | Trigger a background force refresh (re-fetches everything) |
 | `GET` | `/api/progress` | Poll refresh progress (step, percentage, detail) |
 
 CORS is configured for `localhost:3000`, `localhost:5173`, `unicornpunk.org`, and `smallcap-momentum.pages.dev`.
+
+### Recalc Architecture
+
+Both `/api/recalc` and `/api/recalc-risk` follow the same pattern:
+
+1. Frontend sends adjusted weights via POST.
+2. Backend reads the existing Parquet file (which contains individual signal/metric scores).
+3. Recomputes composite scores using the new weights. Missing values are treated as neutral (50 for signals, excluded from risk metrics).
+4. Re-ranks, overwrites the Parquet file, and returns the enriched response.
+
+This enables instant re-weighting without re-fetching any data. The weights are ephemeral — the next cron run reverts to the defaults from the JSON config files.
 
 ### Running
 
@@ -160,15 +243,20 @@ uvicorn api:app --host 0.0.0.0 --port 8000  # production
 **Directory:** `frontend/`  
 **Stack:** React 19 + Vite 7  
 **Hosting:** Cloudflare Pages (built from the `frontend/` directory)  
-**Style:** Retro DOS-terminal aesthetic with neon orange/green on dark backgrounds
+**Style:** Retro DOS-terminal aesthetic with neon orange/cyan on dark backgrounds
 
-### Key Components
+### Key Sections
 
-- **HeroBanner** — Synthwave-styled header with perspective grid
-- **ControlPanel** — Displays market cap range (read-only, set via `config.json`) and universe count, with refresh/recalc buttons
-- **WeightsPanel** — Interactive sliders for each signal weight. Adjusting one automatically rebalances others to maintain 100% total. Changes take effect on next recalc.
-- **DOSTerminal** — The main output: top-20 ranked stocks in a monospaced terminal format. Click any row to expand a detail panel showing fundamentals, insider activity, and price chart.
-- **ChartsGrid** — Sparkline price charts for each watchlist stock
+The page is divided into two major sections, each with its own colour theme:
+
+**Quant Signals (orange theme)**
+- **ControlPanel** — Displays market cap range (read-only, set via `config.json`) and universe count.
+- **QuantSignalsSection** — Interactive sliders for each of the 8 signal weights. Adjusting one automatically rebalances others to maintain 100% total. Recalc button sends adjusted weights to `/api/recalc`.
+- **DOSTerminal** — The main output: top-20 ranked stocks in a monospaced terminal format. Click any row to expand a detail panel showing fundamentals, insider activity, and price info. Includes CSV export.
+
+**Risk Metrics (cyan theme)**
+- **RiskMetricsSection** — Three sliders for Sharpe, IR-Universe, and IR-Russell weights. Recalc button sends adjusted weights to `/api/recalc-risk`.
+- **RiskMetricsTerminal** — Top-20 ranked stocks by risk-adjusted composite in a teal-themed DOS terminal. Shows raw Sharpe and IR values. Click to expand percentile breakdown. Stocks also appearing in the momentum top 20 are marked with a ★ indicator.
 
 ### Build & Deploy
 
@@ -179,7 +267,12 @@ npm run dev          # local dev server at localhost:5173
 npm run build        # production build to frontend/dist/
 ```
 
-The `VITE_API_URL` environment variable points to the backend. Set it in Cloudflare Pages environment settings for production (e.g., `https://unicornpunk.org:8000` or wherever the API is exposed).
+The `VITE_API_URL` environment variable points to the backend. Set it in Cloudflare Pages environment settings for production (e.g., `https://api.unicornpunk.org`).
+
+For local development pointed at the live server:
+```bash
+VITE_API_URL=https://api.unicornpunk.org npm run dev
+```
 
 ---
 
@@ -187,10 +280,11 @@ The `VITE_API_URL` environment variable points to the backend. Set it in Cloudfl
 
 ### Infrastructure
 
-- **Server:** DigitalOcean Droplet (Linux/Ubuntu)
+- **Server:** DigitalOcean Droplet (Linux/Ubuntu 24.04)
 - **Hostname:** `unicorn-hunt` (internal)
-- **Domain:** `unicornpunk.org`
+- **Domain:** `unicornpunk.org` (frontend), `api.unicornpunk.org` (API)
 - **Frontend hosting:** Cloudflare Pages (separate from the droplet)
+- **Reverse proxy:** Caddy (auto HTTPS for `api.unicornpunk.org` → localhost:8000)
 
 ### Server Setup
 
@@ -198,51 +292,41 @@ The backend runs inside a Python virtual environment at `/home/smallcap-momentum
 
 ```
 /home/smallcap-momentum/
-├── api.py                  # FastAPI backend
-├── refresh.py              # Data refresh pipeline
-├── refresh_monitor.py      # Monitoring wrapper (sends email reports)
-├── config.json             # Universe bounds + signal weights
-├── .env                    # API keys (not in git)
+├── api.py                      # FastAPI backend
+├── refresh.py                  # Data refresh pipeline
+├── refresh_monitor.py          # Monitoring wrapper (sends email reports)
+├── config.json                 # Universe bounds + signal weights
+├── risk_metrics_config.json    # Risk metrics weights + lookback config
+├── .env                        # API keys (not in git)
 ├── requirements.txt
-├── venv/                   # Python 3.12 virtual environment
-├── data/                   # All Parquet data files (not in git)
+├── venv/                       # Python 3.12 virtual environment
+├── data/                       # All Parquet data files (not in git)
 │   ├── universe.parquet
+│   ├── all_market_caps.parquet
 │   ├── prices_combined.parquet
-│   ├── prices/             # Individual ticker price files
+│   ├── prices/                 # Individual ticker price files
 │   ├── fundamentals.parquet
 │   ├── news_attention.parquet
 │   ├── insider_activity.parquet
 │   ├── watchlist.parquet
-│   ├── all_market_caps.parquet
+│   ├── benchmark_iwm.parquet   # IWM daily prices for IR calculation
+│   ├── risk_metrics.parquet    # Risk-adjusted rankings
 │   └── ticker_cik_map.json
 ├── src/
-│   ├── data/               # Data fetch modules
-│   └── signals/            # Signal scoring modules
-├── frontend/               # React app (deployed separately to Cloudflare)
-└── refresh.log             # Cron output log
+│   ├── data/                   # Data fetch modules
+│   └── signals/                # Signal scoring + risk metrics modules
+├── frontend/                   # React app (deployed separately to Cloudflare)
+└── refresh.log                 # Cron output log
 ```
-
-### Disk Management
-
-The `data/` directory holds all Parquet files. Key sizes to be aware of:
-
-- `prices_combined.parquet` is the largest file (~1.5M rows across ~1,600 tickers × 5 years of daily data)
-- `data/prices/` contains individual ticker files used during the fetch process and for building the combined file
-- `all_market_caps.parquet` is a snapshot of every US common stock's market cap (used for universe filtering)
-
-The data directory is excluded from git. If you need to rebuild from scratch, run `python refresh.py --force` which will re-fetch everything.
 
 ### Process Management
 
-The FastAPI server should be kept running persistently. Options include `systemd`, `screen`, or `tmux`:
+The FastAPI server runs as a systemd service:
 
 ```bash
-# Using screen
-screen -S api
-cd /home/smallcap-momentum
-source venv/bin/activate
-uvicorn api:app --host 0.0.0.0 --port 8000
-# Ctrl+A, D to detach
+sudo systemctl restart unicornhunt   # restart
+sudo systemctl status unicornhunt    # check status
+sudo journalctl -u unicornhunt -n 50 # view logs
 ```
 
 ---
@@ -259,13 +343,14 @@ A single cron job runs the full pipeline daily at 9pm UTC (5am SGT), after US ma
 
 1. `refresh_monitor.py` wraps `refresh.py` — it snapshots all data file timestamps before the run, then invokes the pipeline.
 2. `refresh.py --yes` runs a **smart refresh**: it checks each data source's age against its staleness threshold and only re-fetches what's actually stale. On a typical day, this means:
-   - **Always runs:** News (daily), Signals (every run)
-   - **Runs if stale:** Prices (daily), Insider (14d), Universe (7d), Fundamentals (30d)
-3. After the pipeline completes, `refresh_monitor.py` compares file timestamps to determine what was actually updated, captures peak memory usage and errors, and sends an email report via Resend.
+   - **Always runs:** News (daily), Signals (every run), Risk Metrics (every run)
+   - **Runs if stale:** Prices (daily), Insider (14d), Universe (7d), Fundamentals (30d), Benchmark IWM (daily)
+3. After signals, `risk_metrics.py` runs to recompute Sharpe and IR rankings.
+4. After the pipeline completes, `refresh_monitor.py` compares file timestamps to determine what was actually updated, captures peak memory usage and errors, and sends an email report via Resend.
 
 ### Typical daily run
 
-On a day where only news and signals need updating (prices are fresh from the previous run), the pipeline takes approximately 3–4 minutes.
+On a day where only news and signals need updating (prices are fresh from the previous run), the pipeline takes approximately 3–5 minutes. Risk metrics add ~5 seconds.
 
 ### Editing the cron
 
@@ -280,14 +365,6 @@ crontab -l          # verify
 tail -100 /home/smallcap-momentum/refresh.log
 ```
 
-### Reverting to the unwrapped pipeline
-
-If the monitor causes issues, switch the cron back to calling `refresh.py` directly:
-
-```
-0 21 * * * bash -c "cd /home/smallcap-momentum && source /home/smallcap-momentum/venv/bin/activate && python refresh.py --yes" >> /home/smallcap-momentum/refresh.log 2>&1
-```
-
 ---
 
 ## Email Monitoring
@@ -295,14 +372,22 @@ If the monitor causes issues, switch the cron back to calling `refresh.py` direc
 **File:** `refresh_monitor.py`  
 **Email service:** Resend (free tier, sends from `onboarding@resend.dev`)
 
-Each morning after the cron job completes, you receive an email report containing:
+Each morning after the cron job completes, you receive two emails:
+
+### 1. Refresh Report
+
+Contains:
 
 1. **Status & Runtime** — Success/failure, total duration, server hostname.
 2. **Peak Memory Usage** — Sampled every 2 seconds during the run via a background thread reading `/proc/meminfo`. Shows the highest RAM usage observed, headroom at that peak, and peak swap usage. Warnings at 75% (watch) and 90% (upgrade). Any swap usage is flagged — it means the droplet is memory-constrained.
-3. **Data Files Table** — Each source shown as REFRESHED / UNCHANGED / MISSING / CREATED, with its expected refresh cadence, file size, and last-modified timestamp.
+3. **Data Files Table** — Each source shown as REFRESHED / UNCHANGED / MISSING / CREATED, with its expected refresh cadence, file size, and last-modified timestamp. Includes `benchmark_iwm.parquet` and `risk_metrics.parquet`.
 4. **Error Log** — Parsed from pipeline output. Catches Python tracebacks (with source file and context), API rate limits (429s), network timeouts, connection errors, and OOM kills. Each error includes severity (CRITICAL/ERROR/WARNING), source, message, and diagnostic context.
 
-### Testing the email
+### 2. Watchlist Email
+
+Shows the top 20 ranked stocks with composite scores, signal pills, price info, sector, market cap, and insider activity indicators.
+
+### Testing
 
 ```bash
 # Dry run — runs pipeline, saves HTML preview instead of emailing
@@ -316,13 +401,13 @@ python refresh_monitor.py --yes
 
 ## Configuration
 
-**File:** `config.json`
+### Signal Weights (`config.json`)
 
 ```json
 {
   "universe": {
     "min_market_cap": 500000000,
-    "max_market_cap": 2000000000
+    "max_market_cap": 2500000000
   },
   "signal_weights": {
     "price_momentum": 0.20,
@@ -340,6 +425,25 @@ python refresh_monitor.py --yes
 - **Universe bounds** are enforced during universe building and again when loading data for signal scoring. Changing them here affects both the next universe refresh and how the watchlist filters tickers.
 - **Signal weights** must sum to 1.0. Set any signal to 0.00 to disable it. These are the default weights used by the runner; the frontend allows live recalculation with different weights (via `/api/recalc`) without changing the file.
 
+### Risk Metrics Weights (`risk_metrics_config.json`)
+
+```json
+{
+  "lookback_days": 63,
+  "benchmark_ticker": "IWM",
+  "benchmark_staleness_days": 1,
+  "weights": {
+    "sharpe": 0.34,
+    "ir_universe": 0.33,
+    "ir_russell": 0.33
+  }
+}
+```
+
+- **lookback_days** — number of trading days for the rolling calculation window (63 ≈ 3 months).
+- **benchmark_ticker** — ETF used for the external IR calculation.
+- **weights** — must sum to 1.0. The frontend allows live recalculation via `/api/recalc-risk`.
+
 ---
 
 ## Data Files
@@ -348,14 +452,16 @@ All stored in `data/` (gitignored). Format is Apache Parquet throughout.
 
 | File | Description | Size (approx) |
 |------|-------------|---------------|
-| `universe.parquet` | Filtered tickers within market cap bounds | ~500 rows |
+| `universe.parquet` | Filtered tickers within market cap bounds | ~1,100 rows |
 | `all_market_caps.parquet` | Full snapshot of all US common stock market caps | ~6,000 rows |
-| `prices_combined.parquet` | 5 years daily OHLCV for all universe tickers | ~1.5M rows |
-| `prices/` | Individual ticker price files (used during fetch) | ~1,600 files |
+| `prices_combined.parquet` | 5 years daily OHLCV for all universe tickers | ~2M rows |
+| `prices/` | Individual ticker price files (used during fetch) | ~2,000 files |
 | `fundamentals.parquet` | SEC EDGAR financial ratios and filing dates | ~1,300 rows |
-| `news_attention.parquet` | 30-day and 7-day article counts per ticker | ~1,600 rows |
-| `insider_activity.parquet` | Form 4 buy/sell counts and dollar values (90-day) | ~1,600 rows |
-| `watchlist.parquet` | Final scored and ranked output | ~500 rows |
+| `news_attention.parquet` | 30-day and 7-day article counts per ticker | ~1,100 rows |
+| `insider_activity.parquet` | Form 4 buy/sell counts and dollar values (90-day) | ~1,100 rows |
+| `watchlist.parquet` | Final scored and ranked momentum output | ~1,100 rows |
+| `benchmark_iwm.parquet` | IWM daily OHLCV for IR-Russell calculation | ~1,250 rows |
+| `risk_metrics.parquet` | Sharpe, IR-Universe, IR-Russell + composite rank | ~900 rows |
 | `ticker_cik_map.json` | SEC ticker-to-CIK mapping (cached 7 days) | ~6,000 entries |
 
 ---
@@ -366,7 +472,7 @@ Stored in `.env` at the project root (gitignored).
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `POLYGON_API_KEY` | Yes | Polygon.io API key for prices, universe, and news data |
+| `POLYGON_API_KEY` | Yes | Polygon.io API key for prices, universe, news, and benchmark data |
 | `SEC_USER_AGENT` | No | User-Agent for SEC EDGAR requests (defaults to `SmallCapMomentum contact@example.com`) |
 | `RESEND_API_KEY` | Yes (for monitoring) | Resend API key for daily email reports |
 
@@ -397,7 +503,12 @@ uvicorn api:app --reload --port 8000
 ```bash
 cd frontend
 npm install
-npm run dev    # starts at localhost:5173, proxies API to localhost:8000
+npm run dev    # starts at localhost:5173, defaults to API at localhost:8000
+```
+
+To point local frontend at the live server:
+```bash
+VITE_API_URL=https://api.unicornpunk.org npm run dev
 ```
 
 ### Useful commands
@@ -422,6 +533,10 @@ python refresh.py --skip-insider --skip-fundamentals
 python -m src.signals.price_momentum
 python -m src.signals.financial_health
 
+# Run risk metrics standalone
+python -m src.signals.risk_metrics --save
+python -m src.signals.risk_metrics --save --refresh  # force IWM re-fetch
+
 # Test API connection
 python src/data/test_connection.py
 ```
@@ -434,12 +549,18 @@ python src/data/test_connection.py
 
 **Missing data for a signal:** If a signal scores fewer tickers than the universe, it's because some tickers lack sufficient price history (need 60+ days for most signals). This is normal for recent IPOs or thinly traded stocks. Missing signals are treated as neutral (score 50) in the composite.
 
+**Risk metrics scores fewer tickers than the watchlist:** Risk metrics require 70% data coverage over the lookback window (44 of 63 days). Tickers with thin trading history or recent IPOs may not meet this threshold and are excluded.
+
 **API rate limits (429 errors):** Polygon has generous limits on the Starter plan. SEC EDGAR enforces 10 req/sec — the scripts use a 0.15s delay between requests to stay within this. If you see 429s in the error log, the delay may need increasing.
 
-**OOM / high memory:** Check the daily email's memory panel. If peak RAM consistently exceeds 75% or swap is in use, consider upgrading the droplet. The biggest memory consumer is loading `prices_combined.parquet` (~1.5M rows) into pandas.
+**OOM / high memory:** Check the daily email's memory panel. If peak RAM consistently exceeds 75% or swap is in use, consider upgrading the droplet. The biggest memory consumer is loading `prices_combined.parquet` (~2M rows) into pandas.
 
 **Email not arriving:** Verify `RESEND_API_KEY` in `.env` on the server. Test with `python refresh_monitor.py --yes --dry-run` to confirm the pipeline runs, then without `--dry-run` to test email delivery. Check the Resend dashboard for delivery status.
 
-**Frontend shows stale data:** The frontend fetches from the API on load. If the API is serving old data, check that the cron is running (`crontab -l`) and review `refresh.log` for errors. You can also trigger a manual refresh via the UI's refresh button or by hitting `POST /api/refresh`.
+**Frontend shows stale data:** The frontend fetches from the API on load. If the API is serving old data, check that the cron is running (`crontab -l`) and review `refresh.log` for errors. After a cron run, the API must be restarted to serve updated Parquet files: `sudo systemctl restart unicornhunt`.
 
-**Git workflow:** The `data/` directory and `.env` are gitignored. Code changes should be committed locally, pushed, then pulled on the server. The cron and `.env` are configured directly on the server and not tracked in git.
+**Blank page on the frontend:** Check the browser console (right-click → Inspect → Console) for JavaScript errors. Common causes: a variable reference mismatch in the JSX, or the API being unreachable (check `api.unicornpunk.org/api/status` in your browser).
+
+**SSH session killed during long refresh:** Use `screen` to keep the process running after disconnect: `screen -S refresh` then run the command. Reconnect later with `screen -r refresh`. If the screen shows "Attached" from a dead session, run `screen -wipe` first.
+
+**Git workflow:** The `data/` directory and `.env` are gitignored. Code changes should be committed locally, pushed, then pulled on the server. The cron and `.env` are configured directly on the server and not tracked in git. Use feature branches for significant changes — test on the server by switching branches, then merge to `main` when validated.

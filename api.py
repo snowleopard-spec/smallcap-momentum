@@ -1,5 +1,5 @@
 """
-Unicorn Hunt API v1.4
+Unicorn Hunt API v1.5
 
 Run with: uvicorn api:app --reload --port 8000
 """
@@ -22,7 +22,7 @@ from typing import Dict
 # ensures subprocess calls work in cron without venv activation issues.
 PYTHON = sys.executable
 
-app = FastAPI(title="Unicorn Hunt API", version="1.4")
+app = FastAPI(title="Unicorn Hunt API", version="1.5")
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,11 +47,12 @@ DATA_FILES = {
     "watchlist": "data/watchlist.parquet",
     "risk_metrics": "data/risk_metrics.parquet",
     "benchmark": "data/benchmark_iwm.parquet",
+    "13d_filings": "data/13d_filings.parquet",
 }
 
 STALENESS = {
     "universe": 7, "prices": 1, "fundamentals": 30, "news": 1, "insider": 14,
-    "benchmark": 1,
+    "benchmark": 1, "13d_filings": 7,
 }
 
 SIC_SECTORS = {
@@ -77,7 +78,7 @@ refresh_in_progress = False
 _FALLBACK_CONFIG = {
     "universe": {
         "min_market_cap": 500000000,
-        "max_market_cap": 2000000000,
+        "max_market_cap": 2500000000,
     },
     "signal_weights": {
         "price_momentum": 0.20,
@@ -146,7 +147,7 @@ def read_progress():
                 return json.load(f)
     except Exception:
         pass
-    return {"step": 0, "total_steps": 7, "step_name": "", "detail": "", "percent": 0}
+    return {"step": 0, "total_steps": 8, "step_name": "", "detail": "", "percent": 0}
 
 
 def clear_progress():
@@ -205,7 +206,7 @@ def load_universe_map():
 def load_price_info(tickers):
     """Load recent price info for a list of tickers."""
     price_info = {}
-    if os.path.exists(DATA_FILES["prices"]):
+    if os.path.exists(DATA_FILES["prices"]) and tickers:
         pdf = pd.read_parquet(DATA_FILES["prices"], filters=[("ticker", "in", tickers)])
         pdf["date"] = pd.to_datetime(pdf["date"])
         cutoff = pdf["date"].max() - pd.Timedelta(days=30)
@@ -387,7 +388,7 @@ def get_risk_metrics_config():
 def get_status():
     statuses = {}
     for name, filepath in DATA_FILES.items():
-        if name in ("watchlist", "risk_metrics"):
+        if name in ("watchlist", "risk_metrics", "13d_filings"):
             continue
         age = get_file_age_days(filepath)
         max_age = STALENESS.get(name, 999)
@@ -443,13 +444,54 @@ def get_risk_metrics():
     return build_risk_metrics_response()
 
 
+@app.get("/api/13d-filings")
+def get_13d_filings():
+    """
+    Serve recent 13D activist filings matched to universe tickers.
+    Enriched with name, sector, market cap, price info.
+    """
+    filings_path = DATA_FILES.get("13d_filings", "data/13d_filings.parquet")
+    if not os.path.exists(filings_path):
+        return {"error": "No 13D filings data found.", "data": []}
+
+    df = pd.read_parquet(filings_path)
+    if df.empty:
+        return {"data": []}
+
+    universe = load_universe_map()
+    filing_tickers = df["ticker"].unique().tolist()
+    price_info = load_price_info(filing_tickers)
+
+    results = []
+    for _, row in df.iterrows():
+        ticker = row["ticker"]
+        uni = universe.get(ticker, {})
+        pi = price_info.get(ticker, {})
+
+        results.append({
+            "ticker": ticker,
+            "name": uni.get("name", ""),
+            "sector": get_sector(uni.get("sic_code")),
+            "market_cap": uni.get("market_cap"),
+            "file_date": row.get("file_date", ""),
+            "form_type": row.get("form_type", ""),
+            "filer_name": row.get("filer_name", ""),
+            "additional_filers": row.get("additional_filers", ""),
+            "file_description": row.get("file_description", ""),
+            "price": pi.get("price"),
+            "change_7d": pi.get("change_7d"),
+        })
+
+    return {"data": results}
+
+
 @app.get("/api/progress")
 def get_progress():
     prog = read_progress()
     return {
         "in_progress": refresh_in_progress,
         "step": prog.get("step", 0),
-        "total_steps": prog.get("total_steps", 7),
+        "total_steps": prog.get("total_steps", 8),
         "step_name": prog.get("step_name", ""),
         "detail": prog.get("detail", ""),
         "percent": prog.get("percent", 0),
@@ -556,7 +598,7 @@ def trigger_refresh(background_tasks: BackgroundTasks):
     if refresh_in_progress:
         return {"status": "already_running"}
     refresh_in_progress = True
-    write_progress(0, 7, "Starting...", "", 0)
+    write_progress(0, 8, "Starting...", "", 0)
     background_tasks.add_task(run_refresh_with_progress, force=False)
     return {"status": "started"}
 
@@ -567,12 +609,12 @@ def trigger_reset(background_tasks: BackgroundTasks):
     if refresh_in_progress:
         return {"status": "already_running"}
     refresh_in_progress = True
-    write_progress(0, 7, "Starting...", "", 0)
+    write_progress(0, 8, "Starting...", "", 0)
     background_tasks.add_task(run_refresh_with_progress, force=True)
     return {"status": "started"}
 
 
-def run_step(step_num, step_name, command, total_steps=7, force=False, skip=False):
+def run_step(step_num, step_name, command, total_steps=8, force=False, skip=False):
     base_pct = int((step_num - 1) / total_steps * 100)
     step_pct = int(step_num / total_steps * 100)
 
@@ -614,7 +656,7 @@ def run_step(step_num, step_name, command, total_steps=7, force=False, skip=Fals
 
 def run_refresh_with_progress(force=False):
     global refresh_in_progress
-    total_steps = 7
+    total_steps = 8
     try:
         # Step 1: Universe
         skip = not force and not is_stale("universe")
@@ -643,6 +685,10 @@ def run_refresh_with_progress(force=False):
 
         # Step 7: Risk Metrics
         run_step(7, "Risk Metrics", f"{PYTHON} -m src.signals.risk_metrics --save", total_steps)
+
+        # Step 8: 13D Filings
+        skip = not force and not is_stale("13d_filings")
+        run_step(8, "13D Filings", f"{PYTHON} -m src.data.fetch_13d", total_steps, force=force, skip=skip)
 
         write_progress(total_steps, total_steps, "Complete", "All done!", 100)
         time.sleep(1)

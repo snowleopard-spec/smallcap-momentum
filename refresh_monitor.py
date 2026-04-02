@@ -45,6 +45,7 @@ DATA_FILES = {
     "watchlist":    {"file": DATA_DIR / "watchlist.parquet",        "cadence": "every run (output)"},
     "benchmark":    {"file": DATA_DIR / "benchmark_iwm.parquet",    "cadence": "daily (1d)"},
     "risk_metrics": {"file": DATA_DIR / "risk_metrics.parquet",     "cadence": "every run (output)"},
+    "13d_filings": {"file": DATA_DIR / "13d_filings.parquet",  "cadence": "weekly (7d)"},
 }
 
 # Email

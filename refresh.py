@@ -26,6 +26,7 @@ DATA_SOURCES = {
     "news":         { "file": "data/news_attention.parquet", "max_age_days": 1  },
     "insider":      { "file": "data/insider_activity.parquet","max_age_days": 14 },
     "benchmark":    { "file": "data/benchmark_iwm.parquet",  "max_age_days": 1  },
+    "13d_filings":  { "file": "data/13d_filings.parquet",   "max_age_days": 7  },
 }
 
 def get_file_age_days(filepath):
@@ -126,6 +127,10 @@ def main():
 
     print("\n--- Running Risk Metrics ---")
     run_command("Computing risk metrics", f"{PYTHON} -m src.signals.risk_metrics --save")
+
+    print("\n--- Running 13D Filings ---")
+    if not args.force and not is_stale("13d_filings"): print("  Up to date, skipping")
+    else: run_command("Fetching 13D filings", f"{PYTHON} -m src.data.fetch_13d")
 
     total_time = time.time() - start_time
     print(f"\n{'='*60}\n  Refresh complete in {total_time/60:.1f} minutes\n{'='*60}")

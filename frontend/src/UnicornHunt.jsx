@@ -46,54 +46,6 @@ function rebalanceWeights(weights, key, newValue) {
   return nw;
 }
 
-// ── Pharma Toggle ────────────────────────────────────────────────────────────
-
-function PharmaToggle({ excludePharma, setExcludePharma, pharmaCount, accentColor }) {
-  const isOrange = accentColor === "orange";
-  const activeColor = isOrange ? "#ff6a00" : "#00e5ff";
-  const activeShadow = isOrange ? "rgba(255,106,0,0.5)" : "rgba(0,229,255,0.5)";
-  const borderColor = isOrange ? "#333333" : "#1a4444";
-
-  return (
-    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, marginBottom:12 }}>
-      <button
-        onClick={() => setExcludePharma(!excludePharma)}
-        style={{
-          display:"flex", alignItems:"center", gap:8,
-          padding:"6px 14px", borderRadius:4,
-          border:`1px solid ${excludePharma ? activeColor : borderColor}`,
-          background: excludePharma ? (isOrange ? "rgba(255,106,0,0.1)" : "rgba(0,229,255,0.1)") : "transparent",
-          cursor:"pointer",
-          fontFamily:"'IBM Plex Mono', 'Courier New', monospace",
-          fontSize:11, color: excludePharma ? activeColor : "#666688",
-          transition:"all 0.2s ease",
-          boxShadow: excludePharma ? `0 0 8px ${activeShadow}` : "none",
-        }}
-      >
-        <span style={{
-          display:"inline-block", width:14, height:14,
-          border:`2px solid ${excludePharma ? activeColor : "#444466"}`,
-          borderRadius:2, position:"relative",
-          background: excludePharma ? (isOrange ? "rgba(255,106,0,0.2)" : "rgba(0,229,255,0.2)") : "transparent",
-        }}>
-          {excludePharma && (
-            <span style={{
-              position:"absolute", top:0, left:2,
-              color: activeColor, fontSize:12, fontWeight:"bold", lineHeight:"12px",
-            }}>✓</span>
-          )}
-        </span>
-        EXCLUDE PHARMA
-        {excludePharma && pharmaCount > 0 && (
-          <span style={{ color:"#888888", fontSize:10 }}>
-            (−{pharmaCount})
-          </span>
-        )}
-      </button>
-    </div>
-  );
-}
-
 // ── Hero Banner ──────────────────────────────────────────────────────────────
 
 function HeroBanner() {
@@ -229,7 +181,7 @@ function QuantSignalsSection({ weights, setWeights, statuses, onRecalc, isRecalc
         <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", letterSpacing:1 }}>8 weighted momentum & quality signals — composite scoring</p>
       </div>
       {SIGNALS.map(sig=><SignalCard key={sig.key} signal={sig} weight={weights[sig.key]||0} onWeightChange={v=>handleWeightChange(sig.key,v)} status={statuses[sig.dataFile]} />)}
-      <button onClick={onRecalc} disabled={isRecalcing} style={{ width:"100%", marginTop:12, padding:"14px 0", borderRadius:8, border:"none", cursor:"pointer", background:"linear-gradient(135deg, #cc4400, #ff6a00)", color:"#fff", fontFamily:"'IBM Plex Mono', monospace", fontSize:13, fontWeight:700, opacity:isRecalcing?0.5:1 }}>
+      <button onClick={onRecalc} disabled={isRecalcing} style={{ width:"100%", marginTop:12, padding:"14px 0", borderRadius:12, border:"2px solid #ff6a00", cursor:"pointer", background:"transparent", color:"#ff6a00", fontFamily:"'Press Start 2P', monospace", fontSize:11, letterSpacing:1, opacity:isRecalcing?0.5:1 }}>
         {isRecalcing ? "Calculating..." : "⚡ Recalc Momentum Rankings"}
       </button>
       {isRecalcing && recalcProgress && <ProgressBar progress={recalcProgress} type="recalc" />}
@@ -261,26 +213,21 @@ function DetailPanel({ row }) {
 
 // ── Momentum DOS Terminal ────────────────────────────────────────────────────
 
-function DOSTerminal({ watchlist, excludePharma, setExcludePharma }) {
+function DOSTerminal({ watchlist }) {
   const [xr, setXr] = useState(null);
-  const filtered = excludePharma ? watchlist.filter(r => r.sector !== "PHRM") : watchlist;
-  const pharmaCount = watchlist.slice(0, 20).filter(r => r.sector === "PHRM").length;
-  const t20 = filtered.slice(0,20);
-  const exportCSV=()=>{const src = excludePharma ? filtered : watchlist; const h="Rank,Ticker,Sector,Composite,Momentum,Volume,Accel,RSI,Stoch,Health,News,Insider,Name,Market Cap,Price,Change 7d";const rows=src.map(r=>r.rank+","+r.ticker+","+r.sector+","+r.composite+","+(r.price_momentum??"")+","+(r.volume_surge??"")+","+(r.price_acceleration??"")+","+(r.rsi??"")+","+(r.stochastic??"")+","+(r.financial_health??"")+","+(r.news_attention??"")+","+(r.insider_activity??"")+","+r.name+","+r.market_cap+","+r.price+","+r.change_7d);const blob=new Blob([[h,...rows].join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="unicorn_hunt_watchlist"+(excludePharma?"_ex_pharma":"")+".csv";a.click();};
+  const t20 = watchlist.slice(0,20);
+  const exportCSV=()=>{const h="Rank,Ticker,Sector,Composite,Momentum,Volume,Accel,RSI,Stoch,Health,News,Insider,Name,Market Cap,Price,Change 7d";const rows=watchlist.map(r=>r.rank+","+r.ticker+","+r.sector+","+r.composite+","+(r.price_momentum??"")+","+(r.volume_surge??"")+","+(r.price_acceleration??"")+","+(r.rsi??"")+","+(r.stochastic??"")+","+(r.financial_health??"")+","+(r.news_attention??"")+","+(r.insider_activity??"")+","+r.name+","+r.market_cap+","+r.price+","+r.change_7d);const blob=new Blob([[h,...rows].join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="unicorn_hunt_watchlist.csv";a.click();};
   const hl="RANK TCKR SEC  COMP  MOMNT VOLUM ACCEL  RSI  STOCH HLTH  NEWS  INSDR NAME";
   const dv="═".repeat(hl.length);
   return (
     <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px" }}>
       <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:4, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Momentum Watchlist</h2>
       <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", textAlign:"center", marginBottom:12 }}>Click any row to expand details</p>
-      <PharmaToggle excludePharma={excludePharma} setExcludePharma={setExcludePharma} pharmaCount={pharmaCount} accentColor="orange" />
       <div style={{ background:"#0a0a0a", border:"2px solid #333333", borderRadius:4, overflow:"hidden" }}>
-        <div style={{ background:"#0000aa", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#ffffff", textAlign:"center" }}>
-          UNICORN HUNT v1.0 — Top 20{excludePharma ? " (ex. Pharma)" : ""}
-        </div>
+        <div style={{ background:"#0000aa", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#ffffff", textAlign:"center" }}>UNICORN HUNT v1.0 — Top 20</div>
         <div style={{ padding:"12px 16px", overflowX:"auto", fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:12, lineHeight:1.8 }}>
           <pre style={{ margin:0, color:"#33ff33" }}>
-            <span style={{ color:"#ffcc00" }}>C:\UNICORN&gt;</span>{" run_signals.exe"}{excludePharma ? " --exclude-pharma" : ""}{"\n\n"}<span style={{ color:"#888888" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#888888" }}>{dv}</span>{"\n"}
+            <span style={{ color:"#ffcc00" }}>C:\UNICORN&gt;</span>{" run_signals.exe\n\n"}<span style={{ color:"#888888" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#888888" }}>{dv}</span>{"\n"}
             {t20.map(row=>(
               <span key={row.rank}>
                 <span onClick={()=>setXr(xr===row.rank?null:row.rank)} style={{ cursor:"pointer" }}>
@@ -297,7 +244,7 @@ function DOSTerminal({ watchlist, excludePharma, setExcludePharma }) {
         </div>
       </div>
       <div style={{ display:"flex", gap:10, marginTop:12, justifyContent:"center" }}>
-        <button onClick={exportCSV} style={{ padding:"10px 24px", borderRadius:6, border:"1px solid #333355", background:"transparent", color:"#33ff33", cursor:"pointer", fontFamily:"'IBM Plex Mono', monospace", fontSize:12 }}>↓ Export CSV{excludePharma ? " (ex. Pharma)" : ""}</button>
+        <button onClick={exportCSV} style={{ padding:"10px 24px", borderRadius:6, border:"1px solid #333355", background:"transparent", color:"#33ff33", cursor:"pointer", fontFamily:"'IBM Plex Mono', monospace", fontSize:12 }}>↓ Export CSV</button>
       </div>
     </div>
   );
@@ -315,7 +262,7 @@ function RiskMetricsSection({ weights, setWeights, lookbackDays, onRecalc, isRec
         <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", letterSpacing:1 }}>Sharpe & Information Ratios — {lookbackDays} day lookback</p>
       </div>
       {RISK_SIGNALS.map(sig=><RiskSignalCard key={sig.key} signal={sig} weight={weights[sig.key]||0} onWeightChange={v=>handleWeightChange(sig.key,v)} />)}
-      <button onClick={onRecalc} disabled={isRecalcing} style={{ width:"100%", marginTop:12, padding:"14px 0", borderRadius:8, border:"none", cursor:"pointer", background:"linear-gradient(135deg, #0088aa, #00ccee)", color:"#fff", fontFamily:"'IBM Plex Mono', monospace", fontSize:13, fontWeight:700, opacity:isRecalcing?0.5:1 }}>
+      <button onClick={onRecalc} disabled={isRecalcing} style={{ width:"100%", marginTop:12, padding:"14px 0", borderRadius:12, border:"2px solid #00e5ff", cursor:"pointer", background:"transparent", color:"#00e5ff", fontFamily:"'Press Start 2P', monospace", fontSize:11, letterSpacing:1, opacity:isRecalcing?0.5:1 }}>
         {isRecalcing ? "Calculating..." : "⚡ Recalc Risk Rankings"}
       </button>
     </div>
@@ -324,26 +271,21 @@ function RiskMetricsSection({ weights, setWeights, lookbackDays, onRecalc, isRec
 
 // ── Risk Metrics DOS Terminal ────────────────────────────────────────────────
 
-function RiskMetricsTerminal({ data, momentumTickers, excludePharma, setExcludePharma }) {
+function RiskMetricsTerminal({ data, momentumTickers }) {
   const [xr, setXr] = useState(null);
-  const filtered = excludePharma ? data.filter(r => r.sector !== "PHRM") : data;
-  const pharmaCount = data.slice(0, 20).filter(r => r.sector === "PHRM").length;
-  const t20 = filtered.slice(0,20);
+  const t20 = data.slice(0,20);
   const hl="RANK TCKR SEC  COMP   SHARPE  IR-UNI IR-RUSS  PRICE    7D    MCAP     NAME";
   const dv="═".repeat(hl.length);
 
   return (
-    <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px 60px" }}>
+    <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px" }}>
       <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:4, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Risk-Adjusted Rankings</h2>
       <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", textAlign:"center", marginBottom:12 }}>Independent ranking of entire universe by blended Sharpe & IR</p>
-      <PharmaToggle excludePharma={excludePharma} setExcludePharma={setExcludePharma} pharmaCount={pharmaCount} accentColor="cyan" />
       <div style={{ background:"#0a0a0a", border:"2px solid #1a4444", borderRadius:4, overflow:"hidden" }}>
-        <div style={{ background:"#004444", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#00ffff", textAlign:"center" }}>
-          RISK METRICS v1.0 — Top 20 by Risk-Adjusted Return{excludePharma ? " (ex. Pharma)" : ""}
-        </div>
+        <div style={{ background:"#004444", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#00ffff", textAlign:"center" }}>RISK METRICS v1.0 — Top 20 by Risk-Adjusted Return</div>
         <div style={{ padding:"12px 16px", overflowX:"auto", fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:12, lineHeight:1.8 }}>
           <pre style={{ margin:0, color:"#00e5ff" }}>
-            <span style={{ color:"#00ffcc" }}>C:\RISK&gt;</span>{" run_metrics.exe"}{excludePharma ? " --exclude-pharma" : ""}{"\n\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}
+            <span style={{ color:"#00ffcc" }}>C:\RISK&gt;</span>{" run_metrics.exe\n\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}
             {t20.map(row=>{
               const chg = row.change_7d;
               const chgStr = chg!=null ? (chg>=0?"+"+chg.toFixed(1)+"%":chg.toFixed(1)+"%") : "N/A";
@@ -387,12 +329,95 @@ function RiskMetricsTerminal({ data, momentumTickers, excludePharma, setExcludeP
   );
 }
 
+// ── 13D Activist Filings Section ─────────────────────────────────────────────
+
+function ActivistFilingsSection() {
+  return (
+    <div style={{ maxWidth:480, margin:"48px auto 20px", padding:"0 20px" }}>
+      <div style={{ textAlign:"center", marginBottom:20 }}>
+        <div style={{ width:60, height:2, background:"linear-gradient(90deg, transparent, #ff44ff, transparent)", margin:"0 auto 20px" }} />
+        <h2 style={{ fontFamily:"'Press Start 2P', monospace", fontSize:14, color:"#ff44ff", textShadow:"0 0 20px rgba(255,68,255,0.4)", letterSpacing:3, marginBottom:6 }}>ACTIVIST TRACKER</h2>
+        <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", letterSpacing:1 }}>SEC Schedule 13D filings — 90 day lookback</p>
+      </div>
+    </div>
+  );
+}
+
+function ActivistFilingsTerminal({ data, momentumTickers, riskTickers }) {
+  const [xr, setXr] = useState(null);
+  const filings = data.slice(0, 20);
+  const hl="DATE       TCKR SEC  FORM         FILER                          PRICE    7D    MCAP";
+  const dv="═".repeat(hl.length);
+
+  if (filings.length === 0) {
+    return (
+      <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px 60px" }}>
+        <div style={{ background:"#0a0a0a", border:"2px solid #2a1a2e", borderRadius:4, overflow:"hidden" }}>
+          <div style={{ background:"#330033", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#ff44ff", textAlign:"center" }}>13D TRACKER v1.0 — No Filings in Last 90 Days</div>
+          <div style={{ padding:"24px 16px", textAlign:"center", fontFamily:"'IBM Plex Mono', monospace", fontSize:12, color:"#555577" }}>
+            No SC 13D filings found for universe tickers in the lookback period.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px 60px" }}>
+      <div style={{ background:"#0a0a0a", border:"2px solid #2a1a2e", borderRadius:4, overflow:"hidden" }}>
+        <div style={{ background:"#330033", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#ff44ff", textAlign:"center" }}>13D TRACKER v1.0 — Recent Activist Filings ({filings.length})</div>
+        <div style={{ padding:"12px 16px", overflowX:"auto", fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:12, lineHeight:1.8 }}>
+          <pre style={{ margin:0, color:"#dd66ff" }}>
+            <span style={{ color:"#cc44cc" }}>C:\ACTIVIST&gt;</span>{" scan_13d.exe\n\n"}<span style={{ color:"#3a1a3e" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#3a1a3e" }}>{dv}</span>{"\n"}
+            {filings.map((row, idx)=>{
+              const chg = row.change_7d;
+              const chgStr = chg!=null ? (chg>=0?"+"+chg.toFixed(1)+"%":chg.toFixed(1)+"%") : "N/A";
+              const chgColor = chg!=null ? (chg>=0?"#00cc66":"#ff4444") : "#775577";
+              const inMomentum = momentumTickers.has(row.ticker);
+              const inRisk = riskTickers.has(row.ticker);
+              const formStr = row.form_type==="SC 13D/A" ? "13D/A (amnd)" : "13D (new)   ";
+              return (
+                <span key={idx}>
+                  <span onClick={()=>setXr(xr===idx?null:idx)} style={{ cursor:"pointer" }}>
+                    <span style={{ color:"#bb88cc" }}>{pad(row.file_date||"N/A",11)}</span>
+                    <span style={{ color:"#ffffff" }}>{pad(row.ticker,5)}</span>
+                    <span style={{ color:"#775577" }}>{pad(row.sector||"—",5)}</span>
+                    <span style={{ color:row.form_type==="SC 13D"?"#ff44ff":"#bb88cc" }}>{pad(formStr,13)}</span>
+                    <span style={{ color:"#dd99ee" }}>{pad((row.filer_name||"Unknown").substring(0,30),31)}</span>
+                    <span style={{ color:"#ccaadd" }}>{pad(row.price!=null?"$"+row.price.toFixed(2):"N/A",9)}</span>
+                    <span style={{ color:chgColor }}>{pad(chgStr,6)}</span>
+                    <span style={{ color:"#775577" }}>{pad(fmtCap(row.market_cap),9)}</span>
+                    {inMomentum && <span style={{ color:"#ff6a00" }}> ★</span>}
+                    {inRisk && <span style={{ color:"#00e5ff" }}> ◆</span>}
+                  </span>{"\n"}
+                  {xr===idx && (
+                    <span>
+                      <span style={{ color:"#3a1a3e" }}>{"  ├─ "}</span>
+                      <span style={{ color:"#775577" }}>Company: </span><span style={{ color:"#dd99ee" }}>{row.name||"Unknown"}</span>{"\n"}
+                      {row.filer_name && <span><span style={{ color:"#3a1a3e" }}>{"  ├─ "}</span><span style={{ color:"#775577" }}>Filer: </span><span style={{ color:"#ff44ff" }}>{row.filer_name}</span>{"\n"}</span>}
+                      {row.additional_filers && <span><span style={{ color:"#3a1a3e" }}>{"  ├─ "}</span><span style={{ color:"#775577" }}>Group: </span><span style={{ color:"#bb88cc" }}>{row.additional_filers}</span>{"\n"}</span>}
+                      {row.file_description && <span><span style={{ color:"#3a1a3e" }}>{"  ├─ "}</span><span style={{ color:"#775577" }}>Description: </span><span style={{ color:"#ccaadd" }}>{row.file_description.substring(0,60)}</span>{"\n"}</span>}
+                    </span>
+                  )}
+                </span>
+              );
+            })}
+            <span style={{ color:"#3a1a3e" }}>{dv}</span>{"\n"}
+            <span style={{ color:"#775577" }}>{"  ★ = in momentum top 20  ◆ = in risk-adjusted top 20"}</span>{"\n\n"}
+            <span style={{ color:"#cc44cc" }}>C:\ACTIVIST&gt;</span><span style={{ animation:"blink 1s infinite", color:"#ff44ff" }}>_</span>
+          </pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ─────────────────────────────────────────────────────────────────
 
 export default function UnicornHunt() {
   // Config state
   const [minCapBn, setMinCapBn] = useState("0.5");
-  const [maxCapBn, setMaxCapBn] = useState("2.0");
+  const [maxCapBn, setMaxCapBn] = useState("2.5");
   const [configLoaded, setConfigLoaded] = useState(false);
 
   // Momentum state
@@ -410,8 +435,8 @@ export default function UnicornHunt() {
   const [riskLookback, setRiskLookback] = useState(63);
   const [isRiskRecalcing, setIsRiskRecalcing] = useState(false);
 
-  // Pharma filter — single toggle drives both terminals
-  const [excludePharma, setExcludePharma] = useState(false);
+  // 13D filings state
+  const [filings13d, setFilings13d] = useState([]);
 
   // Shared state
   const [statuses, setStatuses] = useState({});
@@ -419,9 +444,9 @@ export default function UnicornHunt() {
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(null);
 
-  // Momentum top-20 tickers for ★ overlap indicator (uses filtered view)
-  const filteredWatchlist = excludePharma ? watchlist.filter(r => r.sector !== "PHRM") : watchlist;
-  const momentumTickers = new Set(filteredWatchlist.slice(0, 20).map(w => w.ticker));
+  // Overlap indicators
+  const momentumTickers = new Set(watchlist.slice(0, 20).map(w => w.ticker));
+  const riskTickers = new Set(riskMetrics.slice(0, 20).map(r => r.ticker));
 
   useEffect(() => {
     loadConfig();
@@ -429,6 +454,7 @@ export default function UnicornHunt() {
     loadStatus();
     loadWatchlist();
     loadRiskMetrics();
+    load13dFilings();
   }, []);
 
   const loadConfig = async () => {
@@ -478,6 +504,13 @@ export default function UnicornHunt() {
       if (r.data.config) {
         setRiskLookback(r.data.config.lookback_days || 63);
       }
+    } catch(e) {}
+  };
+
+  const load13dFilings = async () => {
+    try {
+      const r = await axios.get(API_BASE + "/api/13d-filings");
+      setFilings13d(r.data.data || []);
     } catch(e) {}
   };
 
@@ -549,7 +582,7 @@ export default function UnicornHunt() {
         recalcProgress={recalcProgress}
       />
 
-      <DOSTerminal watchlist={watchlist} excludePharma={excludePharma} setExcludePharma={setExcludePharma} />
+      <DOSTerminal watchlist={watchlist} />
 
       {/* ── Divider ── */}
       <div style={{ maxWidth:960, margin:"20px auto", padding:"0 20px" }}>
@@ -568,8 +601,19 @@ export default function UnicornHunt() {
       <RiskMetricsTerminal
         data={riskMetrics}
         momentumTickers={momentumTickers}
-        excludePharma={excludePharma}
-        setExcludePharma={setExcludePharma}
+      />
+
+      {/* ── Divider ── */}
+      <div style={{ maxWidth:960, margin:"20px auto", padding:"0 20px" }}>
+        <div style={{ height:1, background:"linear-gradient(90deg, transparent, #ff44ff33, #ff44ff, #ff44ff33, transparent)" }} />
+      </div>
+
+      {/* ── 13D ACTIVIST FILINGS — magenta theme ── */}
+      <ActivistFilingsSection />
+      <ActivistFilingsTerminal
+        data={filings13d}
+        momentumTickers={momentumTickers}
+        riskTickers={riskTickers}
       />
     </div>
   );

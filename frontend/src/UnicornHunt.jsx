@@ -223,8 +223,8 @@ function DOSTerminal({ watchlist }) {
     <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px" }}>
       <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:4, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Momentum Watchlist</h2>
       <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", textAlign:"center", marginBottom:12 }}>Click any row to expand details</p>
-      <div style={{ background:"#0a0a0a", border:"2px solid #333333", borderRadius:4, overflow:"hidden" }}>
-        <div style={{ background:"#0000aa", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#ffffff", textAlign:"center" }}>UNICORN HUNT v1.0 — Top 20</div>
+      <div style={{ background:"#0a0a0a", border:"2px solid #442200", borderRadius:4, overflow:"hidden" }}>
+        <div style={{ background:"#663300", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#ff6a00", textAlign:"center" }}>UNICORN HUNT v1.0 — Top 20</div>
         <div style={{ padding:"12px 16px", overflowX:"auto", fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:12, lineHeight:1.8 }}>
           <pre style={{ margin:0, color:"#33ff33" }}>
             <span style={{ color:"#ffcc00" }}>C:\UNICORN&gt;</span>{" run_signals.exe\n\n"}<span style={{ color:"#888888" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#888888" }}>{dv}</span>{"\n"}

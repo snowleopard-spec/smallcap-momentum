@@ -46,6 +46,54 @@ function rebalanceWeights(weights, key, newValue) {
   return nw;
 }
 
+// ── Pharma Toggle ────────────────────────────────────────────────────────────
+
+function PharmaToggle({ excludePharma, setExcludePharma, pharmaCount, accentColor }) {
+  const isOrange = accentColor === "orange";
+  const activeColor = isOrange ? "#ff6a00" : "#00e5ff";
+  const activeShadow = isOrange ? "rgba(255,106,0,0.5)" : "rgba(0,229,255,0.5)";
+  const borderColor = isOrange ? "#333333" : "#1a4444";
+
+  return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, marginBottom:12 }}>
+      <button
+        onClick={() => setExcludePharma(!excludePharma)}
+        style={{
+          display:"flex", alignItems:"center", gap:8,
+          padding:"6px 14px", borderRadius:4,
+          border:`1px solid ${excludePharma ? activeColor : borderColor}`,
+          background: excludePharma ? (isOrange ? "rgba(255,106,0,0.1)" : "rgba(0,229,255,0.1)") : "transparent",
+          cursor:"pointer",
+          fontFamily:"'IBM Plex Mono', 'Courier New', monospace",
+          fontSize:11, color: excludePharma ? activeColor : "#666688",
+          transition:"all 0.2s ease",
+          boxShadow: excludePharma ? `0 0 8px ${activeShadow}` : "none",
+        }}
+      >
+        <span style={{
+          display:"inline-block", width:14, height:14,
+          border:`2px solid ${excludePharma ? activeColor : "#444466"}`,
+          borderRadius:2, position:"relative",
+          background: excludePharma ? (isOrange ? "rgba(255,106,0,0.2)" : "rgba(0,229,255,0.2)") : "transparent",
+        }}>
+          {excludePharma && (
+            <span style={{
+              position:"absolute", top:0, left:2,
+              color: activeColor, fontSize:12, fontWeight:"bold", lineHeight:"12px",
+            }}>✓</span>
+          )}
+        </span>
+        EXCLUDE PHARMA
+        {excludePharma && pharmaCount > 0 && (
+          <span style={{ color:"#888888", fontSize:10 }}>
+            (−{pharmaCount})
+          </span>
+        )}
+      </button>
+    </div>
+  );
+}
+
 // ── Hero Banner ──────────────────────────────────────────────────────────────
 
 function HeroBanner() {
@@ -213,21 +261,24 @@ function DetailPanel({ row }) {
 
 // ── Momentum DOS Terminal ────────────────────────────────────────────────────
 
-function DOSTerminal({ watchlist }) {
+function DOSTerminal({ watchlist, excludePharma, setExcludePharma }) {
   const [xr, setXr] = useState(null);
-  const t20 = watchlist.slice(0,20);
-  const exportCSV=()=>{const h="Rank,Ticker,Sector,Composite,Momentum,Volume,Accel,RSI,Stoch,Health,News,Insider,Name,Market Cap,Price,Change 7d";const rows=watchlist.map(r=>r.rank+","+r.ticker+","+r.sector+","+r.composite+","+(r.price_momentum??"")+","+(r.volume_surge??"")+","+(r.price_acceleration??"")+","+(r.rsi??"")+","+(r.stochastic??"")+","+(r.financial_health??"")+","+(r.news_attention??"")+","+(r.insider_activity??"")+","+r.name+","+r.market_cap+","+r.price+","+r.change_7d);const blob=new Blob([[h,...rows].join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="unicorn_hunt_watchlist.csv";a.click();};
+  const filtered = excludePharma ? watchlist.filter(r => r.sector !== "PHRM") : watchlist;
+  const pharmaCount = watchlist.slice(0, 20).filter(r => r.sector === "PHRM").length;
+  const t20 = filtered.slice(0,20);
+  const exportCSV=()=>{const src = excludePharma ? filtered : watchlist; const h="Rank,Ticker,Sector,Composite,Momentum,Volume,Accel,RSI,Stoch,Health,News,Insider,Name,Market Cap,Price,Change 7d";const rows=src.map(r=>r.rank+","+r.ticker+","+r.sector+","+r.composite+","+(r.price_momentum??"")+","+(r.volume_surge??"")+","+(r.price_acceleration??"")+","+(r.rsi??"")+","+(r.stochastic??"")+","+(r.financial_health??"")+","+(r.news_attention??"")+","+(r.insider_activity??"")+","+r.name+","+r.market_cap+","+r.price+","+r.change_7d);const blob=new Blob([[h,...rows].join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="unicorn_hunt_watchlist"+(excludePharma?"_ex_pharma":"")+".csv";a.click();};
   const hl="RANK TCKR SEC  COMP  MOMNT VOLUM ACCEL  RSI  STOCH HLTH  NEWS  INSDR NAME";
   const dv="═".repeat(hl.length);
   return (
     <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px" }}>
       <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:4, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Momentum Watchlist</h2>
       <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", textAlign:"center", marginBottom:12 }}>Click any row to expand details</p>
+      <PharmaToggle excludePharma={excludePharma} setExcludePharma={setExcludePharma} pharmaCount={pharmaCount} accentColor="orange" />
       <div style={{ background:"#0a0a0a", border:"2px solid #442200", borderRadius:4, overflow:"hidden" }}>
-        <div style={{ background:"#663300", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#ff6a00", textAlign:"center" }}>UNICORN HUNT v1.0 — Top 20</div>
+        <div style={{ background:"#663300", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#ff6a00", textAlign:"center" }}>UNICORN HUNT v1.0 — Top 20{excludePharma ? " (ex. Pharma)" : ""}</div>
         <div style={{ padding:"12px 16px", overflowX:"auto", fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:12, lineHeight:1.8 }}>
           <pre style={{ margin:0, color:"#33ff33" }}>
-            <span style={{ color:"#ffcc00" }}>C:\UNICORN&gt;</span>{" run_signals.exe\n\n"}<span style={{ color:"#888888" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#888888" }}>{dv}</span>{"\n"}
+            <span style={{ color:"#ffcc00" }}>C:\UNICORN&gt;</span>{" run_signals.exe"}{excludePharma ? " --exclude-pharma" : ""}{"\n\n"}<span style={{ color:"#888888" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#888888" }}>{dv}</span>{"\n"}
             {t20.map(row=>(
               <span key={row.rank}>
                 <span onClick={()=>setXr(xr===row.rank?null:row.rank)} style={{ cursor:"pointer" }}>
@@ -244,7 +295,7 @@ function DOSTerminal({ watchlist }) {
         </div>
       </div>
       <div style={{ display:"flex", gap:10, marginTop:12, justifyContent:"center" }}>
-        <button onClick={exportCSV} style={{ padding:"10px 24px", borderRadius:6, border:"1px solid #333355", background:"transparent", color:"#33ff33", cursor:"pointer", fontFamily:"'IBM Plex Mono', monospace", fontSize:12 }}>↓ Export CSV</button>
+        <button onClick={exportCSV} style={{ padding:"10px 24px", borderRadius:6, border:"1px solid #333355", background:"transparent", color:"#33ff33", cursor:"pointer", fontFamily:"'IBM Plex Mono', monospace", fontSize:12 }}>↓ Export CSV{excludePharma ? " (ex. Pharma)" : ""}</button>
       </div>
     </div>
   );
@@ -271,9 +322,11 @@ function RiskMetricsSection({ weights, setWeights, lookbackDays, onRecalc, isRec
 
 // ── Risk Metrics DOS Terminal ────────────────────────────────────────────────
 
-function RiskMetricsTerminal({ data, momentumTickers }) {
+function RiskMetricsTerminal({ data, momentumTickers, excludePharma, setExcludePharma }) {
   const [xr, setXr] = useState(null);
-  const t20 = data.slice(0,20);
+  const filtered = excludePharma ? data.filter(r => r.sector !== "PHRM") : data;
+  const pharmaCount = data.slice(0, 20).filter(r => r.sector === "PHRM").length;
+  const t20 = filtered.slice(0,20);
   const hl="RANK TCKR SEC  COMP   SHARPE  IR-UNI IR-RUSS  PRICE    7D    MCAP     NAME";
   const dv="═".repeat(hl.length);
 
@@ -281,11 +334,12 @@ function RiskMetricsTerminal({ data, momentumTickers }) {
     <div style={{ maxWidth:960, margin:"24px auto", padding:"0 20px" }}>
       <h2 style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color:"#8888aa", textAlign:"center", marginBottom:4, fontWeight:400, letterSpacing:2, textTransform:"uppercase" }}>Risk-Adjusted Rankings</h2>
       <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color:"#555577", textAlign:"center", marginBottom:12 }}>Independent ranking of entire universe by blended Sharpe & IR</p>
+      <PharmaToggle excludePharma={excludePharma} setExcludePharma={setExcludePharma} pharmaCount={pharmaCount} accentColor="cyan" />
       <div style={{ background:"#0a0a0a", border:"2px solid #1a4444", borderRadius:4, overflow:"hidden" }}>
-        <div style={{ background:"#004444", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#00ffff", textAlign:"center" }}>RISK METRICS v1.0 — Top 20 by Risk-Adjusted Return</div>
+        <div style={{ background:"#004444", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#00ffff", textAlign:"center" }}>RISK METRICS v1.0 — Top 20 by Risk-Adjusted Return{excludePharma ? " (ex. Pharma)" : ""}</div>
         <div style={{ padding:"12px 16px", overflowX:"auto", fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:12, lineHeight:1.8 }}>
           <pre style={{ margin:0, color:"#00e5ff" }}>
-            <span style={{ color:"#00ffcc" }}>C:\RISK&gt;</span>{" run_metrics.exe\n\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}
+            <span style={{ color:"#00ffcc" }}>C:\RISK&gt;</span>{" run_metrics.exe"}{excludePharma ? " --exclude-pharma" : ""}{"\n\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#1a5555" }}>{dv}</span>{"\n"}
             {t20.map(row=>{
               const chg = row.change_7d;
               const chgStr = chg!=null ? (chg>=0?"+"+chg.toFixed(1)+"%":chg.toFixed(1)+"%") : "N/A";
@@ -436,14 +490,18 @@ export default function UnicornHunt() {
   // 13D filings state
   const [filings13d, setFilings13d] = useState([]);
 
+  // Pharma filter — single toggle drives both terminals
+  const [excludePharma, setExcludePharma] = useState(false);
+
   // Shared state
   const [statuses, setStatuses] = useState({});
   const [universeCount, setUniverseCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(null);
 
-  // Overlap indicators
-  const momentumTickers = new Set(watchlist.slice(0, 20).map(w => w.ticker));
+  // Overlap indicators (respect pharma filter)
+  const filteredWatchlist = excludePharma ? watchlist.filter(r => r.sector !== "PHRM") : watchlist;
+  const momentumTickers = new Set(filteredWatchlist.slice(0, 20).map(w => w.ticker));
   const riskTickers = new Set(riskMetrics.slice(0, 20).map(r => r.ticker));
 
   useEffect(() => {
@@ -580,7 +638,7 @@ export default function UnicornHunt() {
         recalcProgress={recalcProgress}
       />
 
-      <DOSTerminal watchlist={watchlist} />
+      <DOSTerminal watchlist={watchlist} excludePharma={excludePharma} setExcludePharma={setExcludePharma} />
 
       {/* ── Divider ── */}
       <div style={{ maxWidth:960, margin:"20px auto", padding:"0 20px" }}>
@@ -599,6 +657,8 @@ export default function UnicornHunt() {
       <RiskMetricsTerminal
         data={riskMetrics}
         momentumTickers={momentumTickers}
+        excludePharma={excludePharma}
+        setExcludePharma={setExcludePharma}
       />
 
       {/* ── Divider ── */}
@@ -616,3 +676,6 @@ export default function UnicornHunt() {
     </div>
   );
 }
+
+
+

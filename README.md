@@ -2,7 +2,7 @@
 
 **Live at [unicornpunk.org](https://unicornpunk.org)**
 
-A quantitative small-cap stock screener that combines eight momentum and quality signals to surface US equities in the $500M–$2.5B market cap range showing unusual strength. The system fetches data from multiple sources (Polygon, SEC EDGAR), scores every ticker on a 0–100 percentile scale across each signal, and produces a ranked watchlist updated daily by cron. A separate risk metrics engine computes Sharpe ratios and Information Ratios for every ticker, providing an independent risk-adjusted view of the universe.
+A quantitative small-cap stock screener that combines eight momentum and quality signals to surface US equities in the $500M–$2.5B market cap range showing unusual strength. The system fetches data from multiple sources (Polygon, SEC EDGAR), scores every ticker on a 0–100 percentile scale across each signal, and produces a ranked watchlist updated daily by cron. A separate risk metrics engine computes Sharpe ratios and Information Ratios for every ticker, providing an independent risk-adjusted view of the universe. An activist tracker monitors SEC Schedule 13D filings to flag stocks attracting activist investor attention.
 
 ---
 
@@ -12,6 +12,7 @@ A quantitative small-cap stock screener that combines eight momentum and quality
 - [Data Pipeline](#data-pipeline)
 - [Signal Engine](#signal-engine)
 - [Risk Metrics Engine](#risk-metrics-engine)
+- [13D Activist Tracker](#13d-activist-tracker)
 - [Backend API](#backend-api)
 - [Frontend](#frontend)
 - [Server & Deployment](#server--deployment)
@@ -34,7 +35,7 @@ A quantitative small-cap stock screener that combines eight momentum and quality
 │  Polygon.io API ─────┼────▶│  refresh.py       │     │  React + Vite          │
 │  SEC EDGAR XBRL ─────┼────▶│  src/data/*.py    │     │  UnicornHunt.jsx       │
 │  SEC EDGAR Form 4 ───┼────▶│  src/signals/*.py │     │  Hosted on Cloudflare  │
-│                      │     │  risk_metrics.py  │     │  Pages                 │
+│  SEC EDGAR 13D ──────┼────▶│  risk_metrics.py  │     │  Pages                 │
 │                      │     │  api.py (FastAPI) │◀───▶│                        │
 └─────────────────────┘     │                   │     └───────────────────────┘
                              │  Cron (9pm UTC)   │
@@ -42,12 +43,13 @@ A quantitative small-cap stock screener that combines eight momentum and quality
                              └──────────────────┘
 ```
 
-The system has four layers:
+The system has five layers:
 
 1. **Data pipeline** — Python scripts that fetch, cache, and combine data from external APIs into Parquet files.
 2. **Signal engine** — Eight signal classes that each score every ticker, plus a runner that produces a weighted composite and ranked watchlist.
 3. **Risk metrics engine** — Computes Sharpe ratio and two Information Ratios (vs universe and vs Russell 2000) for every ticker, producing an independent risk-adjusted ranking.
-4. **API + Frontend** — A FastAPI backend serving both the momentum watchlist and risk metrics, with live weight recalculation for both. Consumed by a React single-page app with a retro DOS-terminal aesthetic.
+4. **13D activist tracker** — Scans SEC EDGAR for Schedule 13D filings (activist investor declarations of 5%+ ownership) against universe tickers.
+5. **API + Frontend** — A FastAPI backend serving the momentum watchlist, risk metrics, and activist filings. Consumed by a React single-page app with a retro DOS-terminal aesthetic.
 
 ---
 
@@ -96,6 +98,19 @@ Pulls Form 4 insider transaction data from SEC EDGAR. For each ticker, it first 
 - **Refresh cadence:** Fortnightly (14 days)
 - **Lookback:** 90 days of filings
 - **Rate limit:** Same SEC 10/sec policy
+
+### 13D Activist Filings (`src/data/fetch_13d.py`)
+
+Scans SEC EDGAR submissions for recent Schedule 13D and 13D/A filings — declarations by investors who have acquired 5%+ ownership in a company with intent to influence management. For each ticker in the universe, checks the company's recent filing history for activist-related form types.
+
+- **Source:** SEC EDGAR `data.sec.gov/submissions/CIK{cik}.json`
+- **Refresh cadence:** Weekly (7 days)
+- **Lookback:** 90 days of filings
+- **Rate limit:** Same SEC 10/sec policy
+- **Form types matched:** `SC 13D`, `SC 13D/A`, `SCHEDULE 13D`, `SCHEDULE 13D/A`
+- **Output:** `data/13d_filings.parquet`
+
+A Schedule 13D filing is significant because it signals an activist investor taking a meaningful position with the intent to push for changes — board seats, strategic alternatives, operational restructuring, or M&A. An initial `SC 13D` filing is more notable than an amendment (`SC 13D/A`), which may just reflect routine position updates.
 
 ### Benchmark (`src/signals/risk_metrics.py`)
 
@@ -194,10 +209,41 @@ python -m src.signals.risk_metrics --save --refresh # force re-fetch IWM
 
 ---
 
+## 13D Activist Tracker
+
+The activist tracker (`src/data/fetch_13d.py`) monitors SEC EDGAR for Schedule 13D filings against universe tickers. These filings are required when an investor acquires 5% or more of a company's shares with the intent to influence or change control — making them a strong signal of activist interest.
+
+### What it tracks
+
+- **SC 13D** — Initial filings. An activist has taken a 5%+ position and declared intent to influence the company. This is the high-signal event.
+- **SC 13D/A** — Amendments to existing 13D filings. May reflect position increases, updated intentions, or routine updates. Less significant than initial filings but still worth monitoring.
+
+### How it works
+
+1. Loads the universe and the ticker-to-CIK mapping (same mapping used by the insider and fundamentals fetchers).
+2. For each ticker, fetches the company's recent submissions from SEC EDGAR.
+3. Filters for 13D-related form types filed within the 90-day lookback window.
+4. Saves matched filings to `data/13d_filings.parquet`.
+5. The API enriches filings with sector, market cap, price, and 7-day change from the universe and price data.
+
+### Frontend display
+
+The activist tracker appears in a magenta-themed DOS terminal below the risk metrics section. Each filing shows the date, ticker, form type (initial vs amendment), price, 7-day change, market cap, and company name. Overlap indicators show if the stock also appears in the momentum top 20 (★) or risk-adjusted top 20 (◆).
+
+### Running standalone
+
+```bash
+python -m src.data.fetch_13d              # fetch and save
+python -m src.data.fetch_13d --refresh    # clear cache and re-fetch
+python -m src.data.fetch_13d --test 20    # test with first 20 tickers
+```
+
+---
+
 ## Backend API
 
-**File:** `api.py`  
-**Framework:** FastAPI with Uvicorn  
+**File:** `api.py`
+**Framework:** FastAPI with Uvicorn
 **Port:** 8000
 
 ### Endpoints
@@ -209,6 +255,7 @@ python -m src.signals.risk_metrics --save --refresh # force re-fetch IWM
 | `GET` | `/api/risk-metrics-config` | Risk metrics weights and lookback from `risk_metrics_config.json` |
 | `GET` | `/api/watchlist` | Full ranked watchlist with all scores, fundamentals, insider data, and price info |
 | `GET` | `/api/risk-metrics` | Ranked risk-adjusted metrics with Sharpe, IR-Universe, IR-Russell, price info |
+| `GET` | `/api/13d-filings` | Recent 13D activist filings enriched with sector, market cap, and price info |
 | `GET` | `/api/prices/{ticker}` | Daily close prices for a single ticker (default 365 days) |
 | `POST` | `/api/recalc` | Re-rank watchlist with custom signal weights (body: `{"weights": {...}}`) — instant, no refetch |
 | `POST` | `/api/recalc-risk` | Re-rank risk metrics with custom metric weights (body: `{"weights": {...}}`) — instant, no refetch |
@@ -240,14 +287,14 @@ uvicorn api:app --host 0.0.0.0 --port 8000  # production
 
 ## Frontend
 
-**Directory:** `frontend/`  
-**Stack:** React 19 + Vite 7  
-**Hosting:** Cloudflare Pages (built from the `frontend/` directory)  
-**Style:** Retro DOS-terminal aesthetic with neon orange/cyan on dark backgrounds
+**Directory:** `frontend/`
+**Stack:** React 19 + Vite 7
+**Hosting:** Cloudflare Pages (built from the `frontend/` directory)
+**Style:** Retro DOS-terminal aesthetic with neon orange/cyan/magenta on dark backgrounds
 
 ### Key Sections
 
-The page is divided into two major sections, each with its own colour theme:
+The page is divided into three major sections, each with its own colour theme:
 
 **Quant Signals (orange theme)**
 - **ControlPanel** — Displays market cap range (read-only, set via `config.json`) and universe count.
@@ -257,6 +304,25 @@ The page is divided into two major sections, each with its own colour theme:
 **Risk Metrics (cyan theme)**
 - **RiskMetricsSection** — Three sliders for Sharpe, IR-Universe, and IR-Russell weights. Recalc button sends adjusted weights to `/api/recalc-risk`.
 - **RiskMetricsTerminal** — Top-20 ranked stocks by risk-adjusted composite in a teal-themed DOS terminal. Shows raw Sharpe and IR values. Click to expand percentile breakdown. Stocks also appearing in the momentum top 20 are marked with a ★ indicator.
+
+**Activist Tracker (magenta theme)**
+- **ActivistFilingsSection** — Header for the 13D tracker section.
+- **ActivistFilingsTerminal** — Recent Schedule 13D filings in a magenta-themed DOS terminal. Shows filing date, ticker, form type (initial vs amendment), price, 7-day change, market cap, and company name. Overlap indicators: ★ = also in momentum top 20, ◆ = also in risk-adjusted top 20.
+
+### Pharma Filter
+
+The momentum and risk metrics terminals include a toggle to exclude pharmaceutical stocks (SIC sector code `28`, displayed as `PHRM`). This is a frontend-only filter — no backend changes or separate watchlists are needed, since the API returns the full ranked universe and the frontend filters before slicing to top 20.
+
+When active:
+- Both terminals show "ex. Pharma" in their title bars and command lines (e.g. `run_signals.exe --exclude-pharma`)
+- The toggle shows how many pharma stocks were removed from the top 20
+- Original ranks from the full universe are preserved (gaps in numbering indicate where pharma stocks sat)
+- CSV export respects the filter and appends `_ex_pharma` to the filename
+- The ★ momentum overlap indicator on the risk terminal uses the filtered top 20
+
+The toggle state is shared — clicking it on either terminal toggles both.
+
+**Why pharma filtering?** Small-cap pharma stocks frequently dominate momentum screeners because they move on binary catalysts (FDA approvals, trial data) rather than the kind of sustained momentum the signals are designed to capture. Filtering them out reveals the non-pharma stocks that might otherwise be buried.
 
 ### Build & Deploy
 
@@ -311,6 +377,7 @@ The backend runs inside a Python virtual environment at `/home/smallcap-momentum
 │   ├── watchlist.parquet
 │   ├── benchmark_iwm.parquet   # IWM daily prices for IR calculation
 │   ├── risk_metrics.parquet    # Risk-adjusted rankings
+│   ├── 13d_filings.parquet     # Activist investor filings
 │   └── ticker_cik_map.json
 ├── src/
 │   ├── data/                   # Data fetch modules
@@ -344,13 +411,14 @@ A single cron job runs the full pipeline daily at 9pm UTC (5am SGT), after US ma
 1. `refresh_monitor.py` wraps `refresh.py` — it snapshots all data file timestamps before the run, then invokes the pipeline.
 2. `refresh.py --yes` runs a **smart refresh**: it checks each data source's age against its staleness threshold and only re-fetches what's actually stale. On a typical day, this means:
    - **Always runs:** News (daily), Signals (every run), Risk Metrics (every run)
-   - **Runs if stale:** Prices (daily), Insider (14d), Universe (7d), Fundamentals (30d), Benchmark IWM (daily)
+   - **Runs if stale:** Prices (daily), Insider (14d), Universe (7d), Fundamentals (30d), Benchmark IWM (daily), 13D Filings (7d)
 3. After signals, `risk_metrics.py` runs to recompute Sharpe and IR rankings.
-4. After the pipeline completes, `refresh_monitor.py` compares file timestamps to determine what was actually updated, captures peak memory usage and errors, and sends an email report via Resend.
+4. `fetch_13d.py` runs to scan for new activist filings (weekly cadence).
+5. After the pipeline completes, `refresh_monitor.py` compares file timestamps to determine what was actually updated, captures peak memory usage and errors, and sends an email report via Resend.
 
 ### Typical daily run
 
-On a day where only news and signals need updating (prices are fresh from the previous run), the pipeline takes approximately 3–5 minutes. Risk metrics add ~5 seconds.
+On a day where only news and signals need updating (prices are fresh from the previous run), the pipeline takes approximately 3–5 minutes. Risk metrics add ~5 seconds. 13D filings add ~10–15 minutes when stale (weekly), as it checks every ticker in the universe.
 
 ### Editing the cron
 
@@ -369,7 +437,7 @@ tail -100 /home/smallcap-momentum/refresh.log
 
 ## Email Monitoring
 
-**File:** `refresh_monitor.py`  
+**File:** `refresh_monitor.py`
 **Email service:** Resend (free tier, sends from `onboarding@resend.dev`)
 
 Each morning after the cron job completes, you receive two emails:
@@ -380,7 +448,7 @@ Contains:
 
 1. **Status & Runtime** — Success/failure, total duration, server hostname.
 2. **Peak Memory Usage** — Sampled every 2 seconds during the run via a background thread reading `/proc/meminfo`. Shows the highest RAM usage observed, headroom at that peak, and peak swap usage. Warnings at 75% (watch) and 90% (upgrade). Any swap usage is flagged — it means the droplet is memory-constrained.
-3. **Data Files Table** — Each source shown as REFRESHED / UNCHANGED / MISSING / CREATED, with its expected refresh cadence, file size, and last-modified timestamp. Includes `benchmark_iwm.parquet` and `risk_metrics.parquet`.
+3. **Data Files Table** — Each source shown as REFRESHED / UNCHANGED / MISSING / CREATED, with its expected refresh cadence, file size, and last-modified timestamp. Includes `benchmark_iwm.parquet`, `risk_metrics.parquet`, and `13d_filings.parquet`.
 4. **Error Log** — Parsed from pipeline output. Catches Python tracebacks (with source file and context), API rate limits (429s), network timeouts, connection errors, and OOM kills. Each error includes severity (CRITICAL/ERROR/WARNING), source, message, and diagnostic context.
 
 ### 2. Watchlist Email
@@ -462,6 +530,7 @@ All stored in `data/` (gitignored). Format is Apache Parquet throughout.
 | `watchlist.parquet` | Final scored and ranked momentum output | ~1,100 rows |
 | `benchmark_iwm.parquet` | IWM daily OHLCV for IR-Russell calculation | ~1,250 rows |
 | `risk_metrics.parquet` | Sharpe, IR-Universe, IR-Russell + composite rank | ~900 rows |
+| `13d_filings.parquet` | Recent SC 13D/13D-A activist filings | varies |
 | `ticker_cik_map.json` | SEC ticker-to-CIK mapping (cached 7 days) | ~6,000 entries |
 
 ---
@@ -537,6 +606,11 @@ python -m src.signals.financial_health
 python -m src.signals.risk_metrics --save
 python -m src.signals.risk_metrics --save --refresh  # force IWM re-fetch
 
+# Fetch 13D filings standalone
+python -m src.data.fetch_13d
+python -m src.data.fetch_13d --refresh    # force re-fetch
+python -m src.data.fetch_13d --test 20    # test mode
+
 # Test API connection
 python src/data/test_connection.py
 ```
@@ -545,7 +619,7 @@ python src/data/test_connection.py
 
 ## Troubleshooting
 
-**Pipeline takes too long:** On a full `--force` refresh, the bottleneck is SEC EDGAR fetches (fundamentals + insider) due to their 10 req/sec rate limit. A full run from scratch can take 30+ minutes. Smart refresh (default) skips fresh data and typically completes in 3–5 minutes.
+**Pipeline takes too long:** On a full `--force` refresh, the bottleneck is SEC EDGAR fetches (fundamentals + insider + 13D) due to their 10 req/sec rate limit. A full run from scratch can take 30+ minutes. Smart refresh (default) skips fresh data and typically completes in 3–5 minutes.
 
 **Missing data for a signal:** If a signal scores fewer tickers than the universe, it's because some tickers lack sufficient price history (need 60+ days for most signals). This is normal for recent IPOs or thinly traded stocks. Missing signals are treated as neutral (score 50) in the composite.
 

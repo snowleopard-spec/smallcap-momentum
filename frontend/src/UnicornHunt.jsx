@@ -346,7 +346,7 @@ function ActivistFilingsSection() {
 function ActivistFilingsTerminal({ data, momentumTickers, riskTickers }) {
   const [xr, setXr] = useState(null);
   const filings = data.slice(0, 20);
-  const hl="DATE       TCKR SEC  FORM         FILER                          PRICE    7D    MCAP";
+  const hl="DATE       TCKR SEC  FORM         PRICE    7D     MCAP      NAME";
   const dv="═".repeat(hl.length);
 
   if (filings.length === 0) {
@@ -368,7 +368,7 @@ function ActivistFilingsTerminal({ data, momentumTickers, riskTickers }) {
         <div style={{ background:"#330033", padding:"4px 12px", fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:10, color:"#ff44ff", textAlign:"center" }}>13D TRACKER v1.0 — Recent Activist Filings ({filings.length})</div>
         <div style={{ padding:"12px 16px", overflowX:"auto", fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:12, lineHeight:1.8 }}>
           <pre style={{ margin:0, color:"#dd66ff" }}>
-            <span style={{ color:"#cc44cc" }}>C:\ACTIVIST&gt;</span>{" scan_13d.exe\n\n"}<span style={{ color:"#3a1a3e" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#3a1a3e" }}>{dv}</span>{"\n"}
+            <span style={{ color:"#3a1a3e" }}>{dv}</span>{"\n"}<span style={{ color:"#ffffff" }}>{hl}</span>{"\n"}<span style={{ color:"#3a1a3e" }}>{dv}</span>{"\n"}
             {filings.map((row, idx)=>{
               const chg = row.change_7d;
               const chgStr = chg!=null ? (chg>=0?"+"+chg.toFixed(1)+"%":chg.toFixed(1)+"%") : "N/A";
@@ -383,10 +383,10 @@ function ActivistFilingsTerminal({ data, momentumTickers, riskTickers }) {
                     <span style={{ color:"#ffffff" }}>{pad(row.ticker,5)}</span>
                     <span style={{ color:"#775577" }}>{pad(row.sector||"—",5)}</span>
                     <span style={{ color:row.form_type==="SC 13D"?"#ff44ff":"#bb88cc" }}>{pad(formStr,13)}</span>
-                    <span style={{ color:"#dd99ee" }}>{pad((row.filer_name||"Unknown").substring(0,30),31)}</span>
                     <span style={{ color:"#ccaadd" }}>{pad(row.price!=null?"$"+row.price.toFixed(2):"N/A",9)}</span>
-                    <span style={{ color:chgColor }}>{pad(chgStr,6)}</span>
-                    <span style={{ color:"#775577" }}>{pad(fmtCap(row.market_cap),9)}</span>
+                    <span style={{ color:chgColor }}>{pad(chgStr,7)}</span>
+                    <span style={{ color:"#775577" }}>{pad(fmtCap(row.market_cap),10)}</span>
+                    <span style={{ color:"#dd99ee" }}>{pad((row.name||"").substring(0,22),22)}</span>
                     {inMomentum && <span style={{ color:"#ff6a00" }}> ★</span>}
                     {inRisk && <span style={{ color:"#00e5ff" }}> ◆</span>}
                   </span>{"\n"}
@@ -394,8 +394,6 @@ function ActivistFilingsTerminal({ data, momentumTickers, riskTickers }) {
                     <span>
                       <span style={{ color:"#3a1a3e" }}>{"  ├─ "}</span>
                       <span style={{ color:"#775577" }}>Company: </span><span style={{ color:"#dd99ee" }}>{row.name||"Unknown"}</span>{"\n"}
-                      {row.filer_name && <span><span style={{ color:"#3a1a3e" }}>{"  ├─ "}</span><span style={{ color:"#775577" }}>Filer: </span><span style={{ color:"#ff44ff" }}>{row.filer_name}</span>{"\n"}</span>}
-                      {row.additional_filers && <span><span style={{ color:"#3a1a3e" }}>{"  ├─ "}</span><span style={{ color:"#775577" }}>Group: </span><span style={{ color:"#bb88cc" }}>{row.additional_filers}</span>{"\n"}</span>}
                       {row.file_description && <span><span style={{ color:"#3a1a3e" }}>{"  ├─ "}</span><span style={{ color:"#775577" }}>Description: </span><span style={{ color:"#ccaadd" }}>{row.file_description.substring(0,60)}</span>{"\n"}</span>}
                     </span>
                   )}

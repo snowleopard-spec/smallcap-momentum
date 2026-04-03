@@ -5,6 +5,11 @@ import asyncio
 import requests
 import pandas as pd
 from dotenv import load_dotenv
+
+# Add project root to path so we can import config_change_detector
+# (this script lives in src/data/ but the module is in the project root)
+import sys as _sys
+_sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from config_change_detector import save_universe_config_hash
 
 load_dotenv()

@@ -5,6 +5,7 @@ import asyncio
 import requests
 import pandas as pd
 from dotenv import load_dotenv
+from config_change_detector import save_universe_config_hash
 
 load_dotenv()
 
@@ -239,6 +240,10 @@ def main():
         df_universe = df_universe.sort_values("market_cap", ascending=False).reset_index(drop=True)
     df_universe.to_parquet("data/universe.parquet", index=False)
     print(f"Saved universe: {len(df_universe)} stocks -> data/universe.parquet")
+
+    # Record config hash so refresh.py can detect future config changes
+    save_universe_config_hash()
+    print(f"  Config hash saved")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n=== Summary ===")

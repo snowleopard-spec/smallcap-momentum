@@ -13,6 +13,7 @@ import sys
 import time
 import subprocess
 from datetime import datetime
+from config_change_detector import universe_config_changed
 
 # Always use the same Python interpreter that launched this script.
 # This means venv Python when run via cron or directly, and local
@@ -102,8 +103,13 @@ def main():
 
     if not args.signals_only:
         print("\n\n--- Step 1/5: Universe ---")
-        if not args.force and not is_stale("universe"): print("  Up to date, skipping")
-        else: run_command("Refreshing universe", f"{PYTHON} src/data/universe.py --refresh")
+        config_changed = universe_config_changed()
+        if config_changed:
+            print("  Universe config changed — forcing refresh")
+        if not args.force and not is_stale("universe") and not config_changed:
+            print("  Up to date, skipping")
+        else:
+            run_command("Refreshing universe", f"{PYTHON} src/data/universe.py --refresh")
 
         print("\n--- Step 2/5: Prices ---")
         if os.path.exists("data/prices_combined.parquet"): run_command("Refreshing prices", f"{PYTHON} src/data/fetch_prices.py --refresh")

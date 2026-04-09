@@ -6,13 +6,13 @@ This acts as a QUALITY FILTER — you don't want momentum leading you
 into financially distressed companies that are about to dilute or go bust.
 
 Combines four sub-scores:
-    1. Solvency (35%): current ratio and debt-to-equity
+    1. Solvency (45%): current ratio and debt-to-equity
        - Can the company pay its bills? Is it over-leveraged?
-    2. Cash position (25%): cash as % of total assets
+    2. Cash position (30%): cash as % of total assets
        - Does it have a war chest or is it burning through cash?
-    3. Profitability (25%): net margin
-       - Is the business actually making money?
-    4. Filing recency (15%): how recent is the latest filing
+    3. Profitability (0%): net margin — excluded from scoring
+       - Data still collected and shown in detail panel
+    4. Filing recency (25%): how recent is the latest filing
        - Stale filings are a red flag for small caps
 
 A stock with great momentum but terrible financials is a trap.
@@ -171,10 +171,10 @@ class FinancialHealth(BaseSignal):
         Calculate financial health score for each ticker.
 
         Combines:
-            - Solvency: 35%
-            - Cash position: 25%
-            - Profitability: 25%
-            - Filing recency: 15%
+            - Solvency: 45%
+            - Cash position: 30%
+            - Profitability: 0% (excluded — data still captured)
+            - Filing recency: 25%
         """
         if self.fundamentals.empty:
             return pd.DataFrame(columns=["ticker", "raw_signal"])
@@ -205,11 +205,13 @@ class FinancialHealth(BaseSignal):
             )
 
             # Weighted composite (0 to 1 scale)
+            # Profitability (net margin) excluded from scoring — weight = 0
+            # Redistributed: Solvency 45%, Cash 30%, Recency 25%
             composite = (
-                0.35 * solvency +
-                0.25 * cash +
-                0.25 * profitability +
-                0.15 * recency
+                0.45 * solvency +
+                0.30 * cash +
+                0.00 * profitability +
+                0.25 * recency
             )
 
             # Convert to raw signal: -1 to +1 scale (centred at 0)
@@ -249,11 +251,3 @@ if __name__ == "__main__":
         print(f"  {row['ticker']:8s} score: {row['score']:5.1f}  raw: {row['raw_signal']:+.3f}")
 
     print("\nBottom 10 (weakest financial health):")
-    bottom = scores.nsmallest(10, "score")
-    for _, row in bottom.iterrows():
-        print(f"  {row['ticker']:8s} score: {row['score']:5.1f}  raw: {row['raw_signal']:+.3f}")
-
-    print(f"\nScore distribution:")
-    print(f"  Mean:   {scores['score'].mean():.1f}")
-    print(f"  Median: {scores['score'].median():.1f}")
-    print(f"  Std:    {scores['score'].std():.1f}")

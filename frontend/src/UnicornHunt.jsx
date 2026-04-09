@@ -9,7 +9,7 @@ const SIGNALS = [
   { key: "price_acceleration", name: "Price Acceleration", desc: "Rate of change of momentum. Catches stocks early in their move before they appear on simple screens.", source: "Polygon EOD Prices", dataFile: "prices" },
   { key: "rsi", name: "RSI Momentum", desc: "14-day Relative Strength Index, tuned for momentum. Sweet spot 60-80 scores highest, overextended >85 gets penalised.", source: "Polygon EOD Prices", dataFile: "prices" },
   { key: "stochastic", name: "Stochastic", desc: "Slow Stochastic (14,3,3) combining level (50%), crossover (30%), and trend (20%). Where price closed relative to its range.", source: "Polygon EOD Prices", dataFile: "prices" },
-  { key: "financial_health", name: "Financial Health", desc: "Solvency, cash position, profitability, and filing recency from SEC 10-K/10-Q filings. Filters out distressed companies.", source: "SEC EDGAR XBRL", dataFile: "fundamentals" },
+  { key: "financial_health", name: "Financial Health", desc: "Solvency, cash position, and filing recency from SEC 10-K/10-Q filings. Filters out distressed companies.", source: "SEC EDGAR XBRL", dataFile: "fundamentals" },
   { key: "news_attention", name: "News Attention", desc: "30-day article count and 7-day surge, direction-adjusted. For small caps, any media attention is meaningful.", source: "Polygon News API", dataFile: "news" },
   { key: "insider_activity", name: "Insider Buying", desc: "Form 4 insider purchases vs sales. Asymmetric: buying is strongly bullish, selling only mildly bearish.", source: "SEC EDGAR Form 4", dataFile: "insider" },
 ];
@@ -112,11 +112,8 @@ function HeroBanner() {
           </h1>
         </div>
       </div>
-      {/* Subtitle bar below image */}
-      <div style={{ background:"#0d0d0d", textAlign:"center", padding:"14px 16px 16px", position:"relative", zIndex:2 }}>
-        <p style={{ fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:"clamp(8px, 2vw, 13px)", color:"#e07020", letterSpacing:4, textTransform:"uppercase", margin:0 }}>Small Cap Momentum Screener</p>
-        <p style={{ fontFamily:"'IBM Plex Mono', 'Courier New', monospace", fontSize:"clamp(16px, 3vw, 22px)", color:"#8a8a8a", marginTop:8, letterSpacing:1 }}>Quantitative signals. Daily ranked watchlist. 2x+ candidates.</p>
-      </div>
+      {/* Spacer below image */}
+      <div style={{ background:"#0d0d0d", height:4 }} />
       {/* Glow bar */}
       <div style={{ height:3, background:"linear-gradient(90deg, transparent, #e07020 20%, #e07020 80%, transparent)", boxShadow:"0 0 12px #e07020" }} />
     </div>
@@ -186,7 +183,7 @@ function SignalCard({ signal, weight, onWeightChange, status }) {
       borderRadius:12,
       border: isInactive ? "1px solid #5a3018" : "1px solid #2e2218",
       boxShadow: isInactive ? "0 0 6px rgba(90,48,24,0.25), inset 0 0 15px rgba(90,48,24,0.06)" : "none",
-      opacity: isInactive ? 0.5 : 1,
+      opacity: isInactive ? 0.7 : 1,
       padding:"16px 20px",
       marginBottom:8,
       transition:"all 0.3s ease",
@@ -194,11 +191,11 @@ function SignalCard({ signal, weight, onWeightChange, status }) {
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
           <div style={{ width:10, height:10, borderRadius:"50%", background: isInactive ? "#5a3018" : (isStale?"#ffcc00":"#ff6a00"), boxShadow: isInactive ? "0 0 4px #5a301844" : (isStale?"0 0 8px #ffcc0088":"0 0 8px #ff6a0088") }} />
-          <span style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color: isInactive ? "#6a4a2a" : "#ffffff", fontWeight:700 }}>{signal.name}</span>
+          <span style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:14, color: isInactive ? "#8a6a3a" : "#ffffff", fontWeight:700 }}>{signal.name}</span>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <span style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color: isInactive ? "#5a3a1a" : "#666688" }}>{ageStr}</span>
-          <span style={{ fontFamily:"'Press Start 2P', monospace", fontSize:12, color: isInactive ? "#5a3a1a" : "#ff6a00", minWidth:40, textAlign:"right" }}>{weight}%</span>
+          <span style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color: isInactive ? "#7a5a2a" : "#666688" }}>{ageStr}</span>
+          <span style={{ fontFamily:"'Press Start 2P', monospace", fontSize:12, color: isInactive ? "#7a5a2a" : "#ff6a00", minWidth:40, textAlign:"right" }}>{weight}%</span>
         </div>
       </div>
       <div style={{ position:"relative", height:24, marginBottom:8 }}>
@@ -207,8 +204,8 @@ function SignalCard({ signal, weight, onWeightChange, status }) {
         </div>
         <input type="range" min={0} max={50} value={weight} onChange={e=>onWeightChange(Number(e.target.value))} style={{ position:"absolute", top:0, left:0, width:"100%", height:24, opacity:0, cursor:"pointer" }} />
       </div>
-      <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color: isInactive ? "#5a4a3a" : "#888888", margin:0, lineHeight:1.5 }}>{signal.desc}</p>
-      <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:10, color: isInactive ? "#4a3a2a" : "#555577", margin:"4px 0 0 0" }}>Source: {signal.source}</p>
+      <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:11, color: isInactive ? "#7a6a4a" : "#888888", margin:0, lineHeight:1.5 }}>{signal.desc}</p>
+      <p style={{ fontFamily:"'IBM Plex Mono', monospace", fontSize:10, color: isInactive ? "#6a5a3a" : "#555577", margin:"4px 0 0 0" }}>Source: {signal.source}</p>
     </div>
   );
 }
@@ -682,3 +679,9 @@ export default function UnicornHunt() {
     </div>
   );
 }
+
+
+
+================================================
+FILE: src/__init__.py
+================================================

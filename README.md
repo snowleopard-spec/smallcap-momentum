@@ -2,7 +2,7 @@
 
 **Live at [unicornpunk.org](https://unicornpunk.org)**
 
-A quantitative small-cap stock screener that combines eight momentum and quality signals to surface US equities in the $500M–$2.5B market cap range showing unusual strength. The system fetches data from multiple sources (Polygon, SEC EDGAR), scores every ticker on a 0–100 percentile scale across each signal, and produces a ranked watchlist updated daily by cron. A separate risk metrics engine computes Sharpe ratios and Information Ratios for every ticker, providing an independent risk-adjusted view of the universe. An activist tracker monitors SEC Schedule 13D filings to flag stocks attracting activist investor attention.
+A quantitative small-cap stock screener that combines eight momentum and quality signals to surface US equities in the $500M–$3B market cap range showing unusual strength. The system fetches data from multiple sources (Polygon, SEC EDGAR), scores every ticker on a 0–100 percentile scale across each signal, and produces a ranked watchlist updated daily by cron. A separate risk metrics engine computes Sharpe ratios and Information Ratios for every ticker, providing an independent risk-adjusted view of the universe. An activist tracker monitors SEC Schedule 13D filings to flag stocks attracting activist investor attention.
 
 ---
 
@@ -59,7 +59,7 @@ Each data source has its own fetch script in `src/data/`. They all write Parquet
 
 ### Universe (`src/data/universe.py`)
 
-Builds the investable universe by fetching all active US common stocks (type "CS") from Polygon, then filtering to the market cap range defined in `config.json` (default $500M–$2.5B). It stores both the full market cap snapshot (`data/all_market_caps.parquet`) and the filtered universe (`data/universe.parquet`). Market caps are always re-fetched fresh — no stale cache reuse — so the bounds are applied against current values.
+Builds the investable universe by fetching all active US common stocks (type "CS") from Polygon, then filtering to the market cap range defined in `config.json` (default $500M–$3B). It stores both the full market cap snapshot (`data/all_market_caps.parquet`) and the filtered universe (`data/universe.parquet`). Market caps are always re-fetched fresh — no stale cache reuse — so the bounds are applied against current values.
 
 - **Source:** Polygon `/v3/reference/tickers` + `/v3/reference/tickers/{symbol}`
 - **Refresh cadence:** Weekly (7 days)
@@ -137,7 +137,7 @@ All signals live in `src/signals/` and inherit from `BaseSignal` (`base.py`). Th
 | **Price Momentum** | 20% | Composite 3/6/12-month returns, skipping the most recent month to avoid short-term reversal. Captures sustained trend. |
 | **Volume Surge** | 20% | Recent 5-day volume vs 60-day average, normalised by market cap, direction-adjusted. Measures conviction — elevated volume on an up-move is bullish. |
 | **Insider Buying** | 20% | Form 4 purchases vs sales over 90 days. Asymmetric scoring: buying is strongly bullish, selling only mildly bearish (insiders sell for many benign reasons). |
-| **Financial Health** | 15% | Composite of solvency (35%), cash position (25%), profitability (25%), and filing recency (15%). Acts as a quality filter against distressed companies. |
+| **Financial Health** | 15% | Composite of solvency (45%), cash position (30%), and filing recency (25%). Net margin data is still collected and displayed in the detail panel but excluded from scoring. Acts as a quality filter against distressed companies. |
 | **Stochastic** | 10% | Slow Stochastic (14,3,3) combining level (50%), crossover (30%), and trend (20%). Where price closed relative to its range. |
 | **Price Acceleration** | 10% | Rate of change of momentum. Catches stocks early in their move before they show up on simple screens. |
 | **News Attention** | 5% | 30-day article count with 7-day surge detection. Direction-adjusted — positive price action with news coverage is more meaningful. |
@@ -176,7 +176,7 @@ The risk metrics engine (`src/signals/risk_metrics.py`) provides an independent 
 
 The universe-based IR and the Russell-based IR answer different questions and produce meaningfully different rankings:
 
-- **IR (Universe)** measures outperformance against your own stock pool. The benchmark is the equal-weighted average return of ~1,000 stocks in the $500M–$2.5B range.
+- **IR (Universe)** measures outperformance against your own stock pool. The benchmark is the equal-weighted average return of ~1,000 stocks in the $500M–$3B range.
 - **IR (Russell 2000)** measures outperformance against the broader small-cap market (IWM), which includes stocks well below $500M and has different sector weightings.
 
 A stock ranking high on both IRs is outperforming regardless of benchmark choice — a robust signal. A stock ranking high on one but not the other tells you its edge is specific to either your universe's composition or the broader market.
@@ -290,13 +290,14 @@ uvicorn api:app --host 0.0.0.0 --port 8000  # production
 **Directory:** `frontend/`
 **Stack:** React 19 + Vite 7
 **Hosting:** Cloudflare Pages (built from the `frontend/` directory)
-**Style:** Retro DOS-terminal aesthetic with neon orange/cyan/magenta on dark backgrounds
+**Style:** Retro DOS-terminal aesthetic with neon orange/cyan/magenta on dark backgrounds. Header features a pixel-art banner image with overlaid title text, scanline overlay, and glow bar. Zero-weight signal panels are visually dimmed with a "dying ember" burnt-orange border to indicate they're inactive.
 
 ### Key Sections
 
 The page is divided into three major sections, each with its own colour theme:
 
 **Quant Signals (orange theme)**
+- **HeroBanner** — Full-width pixel-art header with "UNICORN HUNT" overlaid on the image. Static asset served from `frontend/public/header-banner.png`.
 - **ControlPanel** — Displays market cap range (read-only, set via `config.json`) and universe count.
 - **QuantSignalsSection** — Interactive sliders for each of the 8 signal weights. Adjusting one automatically rebalances others to maintain 100% total. Recalc button sends adjusted weights to `/api/recalc`.
 - **DOSTerminal** — The main output: top-20 ranked stocks in a monospaced terminal format. Click any row to expand a detail panel showing fundamentals, insider activity, and price info. Includes CSV export.
@@ -475,7 +476,7 @@ python refresh_monitor.py --yes
 {
   "universe": {
     "min_market_cap": 500000000,
-    "max_market_cap": 2500000000
+    "max_market_cap": 3000000000
   },
   "signal_weights": {
     "price_momentum": 0.20,
@@ -638,3 +639,6 @@ python src/data/test_connection.py
 **SSH session killed during long refresh:** Use `screen` to keep the process running after disconnect: `screen -S refresh` then run the command. Reconnect later with `screen -r refresh`. If the screen shows "Attached" from a dead session, run `screen -wipe` first.
 
 **Git workflow:** The `data/` directory and `.env` are gitignored. Code changes should be committed locally, pushed, then pulled on the server. The cron and `.env` are configured directly on the server and not tracked in git. Use feature branches for significant changes — test on the server by switching branches, then merge to `main` when validated.
+
+
+

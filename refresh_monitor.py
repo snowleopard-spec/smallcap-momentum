@@ -944,7 +944,7 @@ def main():
         send_email(report)
         if report["success"]:
             #send_watchlist_email()
-
+            pass
 
 if __name__ == "__main__":
     main()

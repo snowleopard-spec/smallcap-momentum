@@ -943,7 +943,7 @@ def main():
     else:
         send_email(report)
         if report["success"]:
-            send_watchlist_email()
+            #send_watchlist_email()
 
 
 if __name__ == "__main__":

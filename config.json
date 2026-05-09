@@ -10,8 +10,8 @@
     "price_acceleration": 0.10,
     "rsi": 0.00,
     "stochastic": 0.10,
-    "financial_health": 0.15,
-    "news_attention": 0.05,
+    "financial_health": 0.20,
+    "news_attention": 0.00,
     "insider_activity": 0.20,
     "notes": "Must sum to 1.0. Set to 0.00 to disable a signal entirely."
   }

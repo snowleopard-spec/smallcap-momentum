@@ -261,6 +261,13 @@ def main():
 
     print()
 
+    # Prepare prices once for all signals: filter to universe tickers and
+    # ensure 'date' is datetime. Previously each signal did this itself in
+    # BaseSignal.__init__ with a .copy(), holding ~8x the prices data in
+    # RAM during signal runs. Now all 8 signals share this single frame.
+    from src.signals.base import BaseSignal
+    prices = BaseSignal.prepare_prices(prices, universe)
+
     # Run signals
     print("--- Running signals ---\n")
     signal_results = run_all_signals(prices, universe, fundamentals, news, insider)

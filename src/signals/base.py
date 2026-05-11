@@ -23,20 +23,33 @@ class BaseSignal(ABC):
         """
         Args:
             prices_df: Combined price data with columns:
-                       date, ticker, open, high, low, close, volume
+                       date, ticker, open, high, low, close, volume.
+                       Should be pre-filtered to the universe and have a
+                       datetime 'date' column — the runner prepares this
+                       once via prepare_prices() so all signals share a
+                       single frame instead of each making its own copy.
             universe_df: Universe data with columns:
-                         ticker, name, market_cap, sic_code, primary_exchange
+                         ticker, name, market_cap, sic_code, primary_exchange.
+
+        Both frames are treated as read-only shared references — signals
+        must not mutate them.
         """
-        self.universe = universe_df.copy()
+        self.universe = universe_df
+        self.prices = prices_df
 
-        # Filter prices to only universe tickers upfront.
-        # This ensures every signal only processes tickers within the
-        # defined market cap bounds — not the full prices file.
+    @staticmethod
+    def prepare_prices(prices_df, universe_df):
+        """Filter prices to universe tickers and ensure date is datetime.
+
+        Call this once before constructing any signals. The runner uses
+        this so all 8 signal instances share one prepared frame rather
+        than each filtering/copying independently (which previously held
+        ~8x the prices data in RAM during signal runs).
+        """
         universe_tickers = set(universe_df["ticker"].tolist())
-        self.prices = prices_df[prices_df["ticker"].isin(universe_tickers)].copy()
-
-        # Ensure date is datetime
-        self.prices["date"] = pd.to_datetime(self.prices["date"])
+        prepared = prices_df[prices_df["ticker"].isin(universe_tickers)].copy()
+        prepared["date"] = pd.to_datetime(prepared["date"])
+        return prepared.reset_index(drop=True)
 
     @property
     @abstractmethod

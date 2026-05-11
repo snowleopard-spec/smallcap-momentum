@@ -667,11 +667,17 @@ def load_watchlist_top20():
     df = pd.read_parquet(watchlist_path)
     df = df.sort_values("rank").head(20)
 
-    # Load enrichment data
+    # Only 20 tickers need enrichment — filter each source down before
+    # iterating, rather than walking every row of universe/fundamentals/
+    # insider (~1200 rows each) and discarding most of them.
+    top_tickers = set(df["ticker"].tolist())
+
     universe = {}
     uni_path = DATA_DIR / "universe.parquet"
     if uni_path.exists():
-        for _, row in pd.read_parquet(uni_path).iterrows():
+        uni_df = pd.read_parquet(uni_path)
+        uni_df = uni_df[uni_df["ticker"].isin(top_tickers)]
+        for _, row in uni_df.iterrows():
             universe[row["ticker"]] = {
                 "market_cap": float(row.get("market_cap", 0)),
                 "sic_code": str(row.get("sic_code", "")),
@@ -680,7 +686,9 @@ def load_watchlist_top20():
     fundamentals = {}
     fund_path = DATA_DIR / "fundamentals.parquet"
     if fund_path.exists():
-        for _, row in pd.read_parquet(fund_path).iterrows():
+        fund_df = pd.read_parquet(fund_path)
+        fund_df = fund_df[fund_df["ticker"].isin(top_tickers)]
+        for _, row in fund_df.iterrows():
             fundamentals[row["ticker"]] = {
                 "current_ratio": row.get("current_ratio"),
                 "debt_to_equity": row.get("debt_to_equity"),
@@ -690,7 +698,9 @@ def load_watchlist_top20():
     insider_data = {}
     ins_path = DATA_DIR / "insider_activity.parquet"
     if ins_path.exists():
-        for _, row in pd.read_parquet(ins_path).iterrows():
+        ins_df = pd.read_parquet(ins_path)
+        ins_df = ins_df[ins_df["ticker"].isin(top_tickers)]
+        for _, row in ins_df.iterrows():
             insider_data[row["ticker"]] = {
                 "insider_buys": int(row.get("insider_buys", 0)),
                 "insider_sells": int(row.get("insider_sells", 0)),

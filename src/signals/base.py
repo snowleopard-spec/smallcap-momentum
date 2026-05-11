@@ -35,21 +35,47 @@ class BaseSignal(ABC):
         must not mutate them.
         """
         self.universe = universe_df
-        self.prices = prices_df
+
+        # Defensive: prepare_prices is a no-op when the runner has already
+        # called it (.attrs marker), so the shared frame is reused. Direct
+        # callers (e.g. signal __main__ test blocks) get the prep here.
+        self.prices = self.prepare_prices(prices_df, universe_df)
+
+        # Pre-index prices by ticker for O(1) lookups. groupby on the
+        # pre-sorted parent yields sub-DataFrames that share its data
+        # buffers — no extra row copies, just dict overhead (~1 ticker
+        # entry × ~120 bytes = ~150 KB for ~1200 tickers).
+        self._ticker_groups = {
+            ticker: group
+            for ticker, group in self.prices.groupby("ticker", sort=False)
+        }
+
+        # Pre-index market caps by ticker for O(1) lookups.
+        self._market_caps = dict(
+            zip(universe_df["ticker"], universe_df["market_cap"])
+        )
 
     @staticmethod
     def prepare_prices(prices_df, universe_df):
-        """Filter prices to universe tickers and ensure date is datetime.
+        """Filter prices to universe tickers, ensure date is datetime, and
+        sort by (ticker, date).
 
-        Call this once before constructing any signals. The runner uses
-        this so all 8 signal instances share one prepared frame rather
-        than each filtering/copying independently (which previously held
-        ~8x the prices data in RAM during signal runs).
+        Idempotent: returns the input unchanged if it has already been
+        prepared (marked via .attrs). The runner calls this once so all
+        8 signal instances share one prepared frame rather than each
+        filtering/copying independently. The (ticker, date) sort also
+        guarantees groupby sub-frames are date-ordered, so per-ticker
+        price lookups don't need to re-sort.
         """
+        if prices_df.attrs.get("_prepared_for_signals"):
+            return prices_df
+
         universe_tickers = set(universe_df["ticker"].tolist())
         prepared = prices_df[prices_df["ticker"].isin(universe_tickers)].copy()
         prepared["date"] = pd.to_datetime(prepared["date"])
-        return prepared.reset_index(drop=True)
+        prepared = prepared.sort_values(["ticker", "date"]).reset_index(drop=True)
+        prepared.attrs["_prepared_for_signals"] = True
+        return prepared
 
     @property
     @abstractmethod
@@ -130,13 +156,16 @@ class BaseSignal(ABC):
         return self.prices["date"].max()
 
     def get_ticker_prices(self, ticker):
-        """Get price history for a single ticker, sorted by date."""
-        df = self.prices[self.prices["ticker"] == ticker].sort_values("date")
-        return df
+        """Get price history for a single ticker, sorted by date.
+
+        Returns an empty DataFrame if the ticker isn't present. Sub-frames
+        are pre-sorted by date as part of prepare_prices().
+        """
+        return self._ticker_groups.get(ticker, self.prices.iloc[0:0])
 
     def get_market_cap(self, ticker):
         """Get market cap for a ticker from the universe data."""
-        match = self.universe[self.universe["ticker"] == ticker]
-        if len(match) == 0:
+        cap = self._market_caps.get(ticker)
+        if cap is None or pd.isna(cap):
             return None
-        return match.iloc[0]["market_cap"]
+        return cap

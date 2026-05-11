@@ -220,8 +220,11 @@ def build_combined_file():
                     df[col] = pd.NA
             df = df[expected_cols]
             df["date"] = pd.to_datetime(df["date"])
+            # Force float64 (not whatever pd.to_numeric infers) so chunks
+            # where transactions/vwap are present as ints don't break the
+            # writer when later chunks fill those columns with NaN.
             for col in float_cols:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+                df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
 
             table = pa.Table.from_pandas(df, preserve_index=False)
             if writer is None:

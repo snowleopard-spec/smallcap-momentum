@@ -186,44 +186,68 @@ def extract_errors(output_text, return_code):
             "context": "\n".join(lines[-6:]),  # last 6 lines of traceback for context
         })
 
+    # Specific OOM/kill phrases the kernel, Python, or libc would actually
+    # emit. Previously a naive substring match on "oom" was catching tickers
+    # like OOMA (Ooma, Inc.) and flagging them as critical OOM events.
+    # These patterns use word boundaries so embedded letters in tickers or
+    # company names don't match.
+    oom_patterns = [
+        r"\boom[- ]killer\b",                # kernel oom-killer
+        r"\bout of memory\b",                # generic
+        r"\bkilled process\b",               # dmesg-style
+        r"\bmemoryerror\b",                  # python exception
+        r"\bcannot allocate memory\b",       # libc errno
+        r"\boomkilled\b",                    # systemd cgroup
+        r"^killed$",                         # bare "Killed" line from shell
+        r"\bsignal 9\b",                     # SIGKILL reference
+    ]
+    oom_regex = re.compile("|".join(oom_patterns), re.IGNORECASE)
+
     # Scan for common warning/error patterns in output
     for line in output_text.splitlines():
         lower = line.lower()
-        if "error" in lower and "traceback" not in lower:
+        stripped = line.strip()
+
+        # Check OOM first — most specific, most severe
+        if oom_regex.search(stripped):
+            errors.append({
+                "level": "CRITICAL",
+                "source": "System",
+                "message": stripped,
+                "context": "Process was killed, likely by OOM killer. Your droplet may need more RAM.",
+            })
+            continue
+
+        # Treat "error" as a real error only when it appears as a whole word,
+        # not when it's embedded inside a longer token (e.g. ticker symbols).
+        if re.search(r"\berror\b", lower) and "traceback" not in lower:
             if "rate limit" in lower or "429" in lower:
                 errors.append({
                     "level": "WARNING",
                     "source": "API",
-                    "message": line.strip(),
+                    "message": stripped,
                     "context": "API rate limit hit. Data may be incomplete. Consider spacing requests.",
                 })
             elif "timeout" in lower or "timed out" in lower:
                 errors.append({
                     "level": "WARNING",
                     "source": "Network",
-                    "message": line.strip(),
+                    "message": stripped,
                     "context": "Network timeout. The external API may be slow or down.",
                 })
             elif "connection" in lower:
                 errors.append({
                     "level": "WARNING",
                     "source": "Network",
-                    "message": line.strip(),
+                    "message": stripped,
                     "context": "Connection error. Check network/firewall on the droplet.",
                 })
         elif "✗ failed" in lower or "failed in" in lower:
             errors.append({
                 "level": "ERROR",
                 "source": "refresh.py step",
-                "message": line.strip(),
+                "message": stripped,
                 "context": "A pipeline step returned a non-zero exit code.",
-            })
-        elif "killed" in lower or "oom" in lower or "cannot allocate" in lower:
-            errors.append({
-                "level": "CRITICAL",
-                "source": "System",
-                "message": line.strip(),
-                "context": "Process was killed, likely by OOM killer. Your droplet may need more RAM.",
             })
 
     return errors
@@ -948,3 +972,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
